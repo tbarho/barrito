@@ -247,6 +247,7 @@ test('uninstall: strips only barrito-owned pieces, unwraps statusline, --restore
       calls.push({ bin, args })
       return ''
     },
+    shell: '/bin/zsh',
   }
   const out: string[] = []
   await uninstall(['--restore', '--yes'], {
@@ -406,7 +407,7 @@ test('interactive: a third identity via scripted prompts lands in config with it
   assert.equal(f.items['Cursor SIDE'], 'already-in-keychain')
 
   // detect lists every configured dir — config-driven, not a hardcoded pair
-  const found = detect({ home, exec: f.exec, fs, path: `${home}/bin:/usr/bin:/bin`, keychain: f.keychain })
+  const found = detect({ home, exec: f.exec, fs, path: `${home}/bin:/usr/bin:/bin`, keychain: f.keychain, shell: '/bin/zsh' })
   assert.deepEqual(
     [...new Set(found.claudeDirs.map((d) => d.dir))].sort(),
     [path.join(home, '.claude'), path.join(home, '.claude-personal'), path.join(home, '.claude-side')].sort(),

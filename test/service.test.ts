@@ -21,7 +21,7 @@ beforeEach(() => {
   tmp = mkdtempSync(path.join(os.tmpdir(), 'barrito-service-'))
   process.env.BARRITO_HOME = tmp
   process.env.BARRITO_LOG = path.join(tmp, 'logs', 'barrito.log')
-  delete process.env.BARRITO_PLATFORM
+  process.env.BARRITO_PLATFORM = 'darwin' // launchd asserts below; linux tests pin themselves
   dir = path.join(tmp, 'LaunchAgents')
   calls = []
 })

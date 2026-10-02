@@ -17,7 +17,7 @@ beforeEach(() => {
   tmp = mkdtempSync(path.join(os.tmpdir(), 'barrito-stop-'))
   process.env.BARRITO_HOME = tmp
   process.env.BARRITO_STATE = path.join(tmp, 'state')
-  delete process.env.BARRITO_PLATFORM
+  process.env.BARRITO_PLATFORM = 'darwin' // launchctl asserts; the systemd test pins itself
 })
 
 afterEach(() => {

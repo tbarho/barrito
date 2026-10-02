@@ -184,6 +184,7 @@ test('models sync prints per-dir diffs when dirs diverge', async (t) => {
 })
 
 test('models sync isolates an unwritable dir, writes the rest, exits 1', async (t) => {
+  if (process.getuid?.() === 0) t.skip('root ignores dir permissions')
   const { dirs } = setup(t)
   chmodSync(dirs.b, 0o555)
   const { out, code } = await run(['sync'], cfg(dirs))

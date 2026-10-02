@@ -8,6 +8,7 @@ import type { ExecFileSyncOptions } from 'node:child_process'
 import { get, set, kind } from '../src/keychain/index.ts'
 import type { SecretFs } from '../src/keychain/index.ts'
 import * as linux from '../src/keychain/linux.ts'
+import * as macos from '../src/keychain/macos.ts'
 import type { Exec } from '../src/types.ts'
 
 type Call = { bin: string; args: string[]; opts: ExecFileSyncOptions }
@@ -70,7 +71,7 @@ test('kind: env / file / keyring refs', () => {
 
 test('get: argv shape, no shell, trims output', () => {
   const { calls, exec } = recorder(() => 'sekret\n')
-  assert.equal(get('Vercel AI Gateway Work', { exec }), 'sekret')
+  assert.equal(macos.get('Vercel AI Gateway Work', { exec }), 'sekret')
   assert.equal(calls.length, 1)
   assert.equal(calls[0]?.bin, '/usr/bin/security')
   assert.deepEqual(calls[0]?.args, ['find-generic-password', '-s', 'Vercel AI Gateway Work', '-w'])
@@ -79,24 +80,24 @@ test('get: argv shape, no shell, trims output', () => {
 
 test('get: not found → null', () => {
   const { exec } = recorder(notFound)
-  assert.equal(get('Missing', { exec }), null)
+  assert.equal(macos.get('Missing', { exec }), null)
 })
 
 test('get: other keychain errors surface', () => {
   const { exec } = recorder(() => {
     throw Object.assign(new Error('could not be decoded'), { status: 45 })
   })
-  assert.throws(() => get('Broken', { exec }), /could not be decoded/)
+  assert.throws(() => macos.get('Broken', { exec }), /could not be decoded/)
 })
 
 test('get: empty value → null', () => {
   const { exec } = recorder(() => '\n')
-  assert.equal(get('Empty', { exec }), null)
+  assert.equal(macos.get('Empty', { exec }), null)
 })
 
 test('set: secret goes via stdin, never argv', () => {
   const { calls, exec } = recorder()
-  set('Vercel AI Gateway Work', 'sekret', { exec })
+  macos.set('Vercel AI Gateway Work', 'sekret', { exec })
   assert.deepEqual(calls[0]?.args, ['add-generic-password', '-U', '-s', 'Vercel AI Gateway Work', '-a', 'barrito', '-w'])
   assert.equal(calls[0]?.opts.input, 'sekret\nsekret\n')
   assert.equal(calls[0]?.opts.encoding, 'utf8')
@@ -105,7 +106,7 @@ test('set: secret goes via stdin, never argv', () => {
 
 test('set: account override', () => {
   const { calls, exec } = recorder()
-  set('Cursor', 'k', { account: 'ty', exec })
+  macos.set('Cursor', 'k', { account: 'ty', exec })
   assert.deepEqual(calls[0]?.args, ['add-generic-password', '-U', '-s', 'Cursor', '-a', 'ty', '-w'])
   assert.equal(calls[0]?.opts.input, 'k\nk\n')
 })

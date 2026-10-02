@@ -97,7 +97,7 @@ const at = <K extends Action['kind']>(a: Action | undefined, k: K): Extract<Acti
 
 test('plan is pure: no writes, stable order', () => {
   const f = fakes()
-  const detected = detect({ home, exec: f.exec, fs, path: `${home}/bin:/usr/bin:/bin`, keychain: f.keychain })
+  const detected = detect({ home, exec: f.exec, fs, path: `${home}/bin:/usr/bin:/bin`, keychain: f.keychain, shell: '/bin/zsh' })
   const before = snap(home)
   const actions = plan(detected, answers(next(), detected))
   assert.deepEqual(snap(home), before)
@@ -161,7 +161,7 @@ test('statusline wrap and unwrap round-trip', () => {
 test('apply: cursor keys land in keychain, never in stdout; statusline wraps; shims regenerate', async () => {
   const f = fakes()
   const out: string[] = []
-  const detected = detect({ home, exec: f.exec, fs, path: `${home}/bin:/usr/bin:/bin`, keychain: f.keychain })
+  const detected = detect({ home, exec: f.exec, fs, path: `${home}/bin:/usr/bin:/bin`, keychain: f.keychain, shell: '/bin/zsh' })
   const config = next()
   const actions = plan(detected, answers(config, detected))
   await apply(actions, {
@@ -198,7 +198,7 @@ test('apply: cursor keys land in keychain, never in stdout; statusline wraps; sh
 test('apply models: prints the synced dir paths, never [object Object]', async () => {
   const f = fakes()
   const out: string[] = []
-  const detected = detect({ home, exec: f.exec, fs, path: `${home}/bin:/usr/bin:/bin`, keychain: f.keychain })
+  const detected = detect({ home, exec: f.exec, fs, path: `${home}/bin:/usr/bin:/bin`, keychain: f.keychain, shell: '/bin/zsh' })
   const config = next()
   await apply(plan(detected, answers(config, detected)), {
     backup: createBackup({ ts: '2026-10-01T2030' }),
@@ -219,7 +219,7 @@ test('apply models: prints the synced dir paths, never [object Object]', async (
 test('apply then re-plan → zero actions (idempotent)', async () => {
   const f = fakes()
   const out: string[] = []
-  const detected = detect({ home, exec: f.exec, fs, path: `${home}/bin:/usr/bin:/bin`, keychain: f.keychain })
+  const detected = detect({ home, exec: f.exec, fs, path: `${home}/bin:/usr/bin:/bin`, keychain: f.keychain, shell: '/bin/zsh' })
   const config = next()
   await apply(plan(detected, answers(config, detected)), {
     backup: createBackup({ ts: '2026-10-01T2030' }),
@@ -234,14 +234,14 @@ test('apply then re-plan → zero actions (idempotent)', async () => {
     sleep: async () => {},
   })
 
-  const again = detect({ home, exec: f.exec, fs, path: `${home}/bin:/usr/bin:/bin`, keychain: f.keychain })
+  const again = detect({ home, exec: f.exec, fs, path: `${home}/bin:/usr/bin:/bin`, keychain: f.keychain, shell: '/bin/zsh' })
   const actions = plan(again, answers(load(), again))
   assert.deepEqual(actions, [])
 })
 
 test('replace: false keeps the legacy setup untouched', () => {
   const f = fakes()
-  const detected = detect({ home, exec: f.exec, fs, path: `${home}/bin:/usr/bin:/bin`, keychain: f.keychain })
+  const detected = detect({ home, exec: f.exec, fs, path: `${home}/bin:/usr/bin:/bin`, keychain: f.keychain, shell: '/bin/zsh' })
   const actions = plan(detected, answers(next(), detected, { replace: false }))
   assert.deepEqual(actions.map((a) => a.kind).filter((k) => ['backup', 'bootout', 'shims', 'envrc'].includes(k)), [])
 })
