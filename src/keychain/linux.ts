@@ -3,6 +3,7 @@ import type { ExecFileSyncOptions, ExecFileSyncOptionsWithStringEncoding } from 
 import type { Exec } from '../types.ts'
 
 const BIN = 'secret-tool'
+const BACKUP = 'barrito backup: '
 
 const run = (exec: Exec | undefined, args: string[], opts: ExecFileSyncOptions = {}): string => {
   const merged = { encoding: 'utf8', ...opts } as ExecFileSyncOptionsWithStringEncoding
@@ -42,9 +43,12 @@ export const get = (service: string, { exec }: { exec?: Exec } = {}): string | n
 }
 
 // the secret goes via stdin, never argv — same rule as the macOS adapter
+// backup items carry a barrito-backup attribute so list() can search for them
 export const set = (service: string, value: string, { exec }: { exec?: Exec } = {}): void => {
+  const backup = service.startsWith(BACKUP)
+  const args = ['store', `--label=${backup ? service : `barrito: ${service}`}`, 'service', service, ...(backup ? ['barrito-backup', '1'] : [])]
   try {
-    run(exec, ['store', `--label=barrito: ${service}`, 'service', service], { input: `${value}\n` })
+    run(exec, args, { input: `${value}\n` })
   } catch (err) {
     if (noKeyring(err)) throw actionable(service)
     throw err
@@ -61,4 +65,28 @@ export const available = ({ exec }: { exec?: Exec } = {}): boolean => {
     if (noKeyring(err)) return false
     return true
   }
+}
+
+export const del = (service: string, { exec }: { exec?: Exec } = {}): boolean => {
+  try {
+    run(exec, ['clear', 'service', service])
+  } catch (err) {
+    if (noKeyring(err)) throw actionable(service)
+    if (missed(err)) return false
+    throw err
+  }
+  return true
+}
+
+// backup item names only — search prints secrets too, but only attribute lines are kept
+export const list = ({ exec }: { exec?: Exec } = {}): string[] => {
+  let out: string
+  try {
+    out = run(exec, ['search', '--all', 'barrito-backup', '1'])
+  } catch (err) {
+    if (noKeyring(err)) throw actionable('backup items')
+    if (missed(err)) return []
+    throw err
+  }
+  return [...String(out).matchAll(/^attribute\.service = (.*)$/gm)].map((m) => m[1] ?? '')
 }

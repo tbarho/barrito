@@ -1,3 +1,4 @@
+import { parseArgs } from 'node:util'
 import { execFileSync } from 'node:child_process'
 import { platform } from '../paths.ts'
 import * as keychain from '../keychain/index.ts'
@@ -7,6 +8,7 @@ import type { CommandCtx, Config, Exec, Identity } from '../types.ts'
 
 export interface OwnOpts {
   exec?: Exec
+  fs?: keychain.SecretFs
   platform?: 'darwin' | 'linux'
   save?: (config: Config) => void
 }
@@ -71,9 +73,45 @@ export const own = (
   return { lines: out, changed }
 }
 
+const USAGE = 'usage: barrito keychain own | backups | restore <service> [--from <ts>]'
+
+const fileRefs = (identities: Record<string, Identity>): string[] =>
+  Object.values(identities).flatMap((i) => Object.values(i.keychain ?? {})).filter((r): r is string => typeof r === 'string' && keychain.kind(r) === 'file')
+
+// names + timestamps only — a backup's value is never read here
+const backups = (ctx: CommandCtx, { exec = realExec, fs }: OwnOpts): void => {
+  const ui = create({ print: ctx.print })
+  ui.section('Keychain backups')
+  const items = keychain.backups({ exec, fs, files: fileRefs(ctx.config.identities) })
+  if (!items.length) return ui.outro('no barrito backup items')
+  items.forEach((b) => ui.row(`"${b.service}"  ${ui.c.dim(b.ts)}  ${ui.c.dim(b.backup)}`))
+  ui.outro(`${items.length} backup item${items.length === 1 ? '' : 's'} ${ui.g.dot} barrito keychain restore <service> [--from <ts>]`)
+}
+
+const restore = (argv: string[], ctx: CommandCtx, { exec = realExec, fs }: OwnOpts): void => {
+  const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: { from: { type: 'string' } } })
+  const service = positionals[0]
+  if (!service) {
+    ctx.print(USAGE)
+    return ctx.exit(2)
+  }
+  const ui = create({ print: ctx.print })
+  ui.section('Keychain restore')
+  const done = keychain.restore(service, { exec, fs, from: values.from })
+  if (!done) {
+    ui.warn(`no backup of "${service}"${values.from ? ` taken at ${values.from}` : ''} — barrito keychain backups`)
+    ui.outro(ui.c.red('nothing restored'))
+    return ctx.exit(1)
+  }
+  ui.item(ui.mark('ok'), `restored keychain "${service}" from ${done.ts}`)
+  ui.outro('the value it replaced was backed up first')
+}
+
 export default async (argv: string[], ctx: CommandCtx, opts: OwnOpts = {}): Promise<void> => {
+  if (argv[0] === 'backups') return backups(ctx, opts)
+  if (argv[0] === 'restore') return restore(argv.slice(1), ctx, opts)
   if (argv[0] !== 'own' && argv[0] !== 'trust') {
-    ctx.print('usage: barrito keychain own')
+    ctx.print(USAGE)
     return ctx.exit(2)
   }
   const ui = create({ print: ctx.print })

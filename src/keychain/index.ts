@@ -11,6 +11,7 @@ type Adapter = {
   set: (service: string, value: string, opts?: { account?: string; exec?: Exec }) => void
   has?: (service: string, opts?: { exec?: Exec }) => boolean
   del?: (service: string, opts?: { exec?: Exec }) => boolean
+  list?: (opts?: { exec?: Exec }) => string[]
 }
 
 const adapters: Record<string, Adapter> = { darwin: macos, linux }
@@ -51,10 +52,19 @@ export type SecretFs = {
   closeSync: (fd: number) => void
   renameSync: (from: string, to: string) => void
   mkdirSync: (dir: string, opts?: { recursive?: boolean }) => void
+  readdirSync: (dir: string) => string[]
+  rmSync: (file: string, opts?: { force?: boolean }) => void
 }
 
+// names only — a manifest never holds a secret value
+export type SecretEntry = { kind: 'keychain'; service: string; account: string; backup: string }
+
+// the slice of a backup handle (src/backup.ts) set() needs: its ts names the backup
+// item, secret() records it in the manifest
+export type Recorder = { ts: string; secret: (entry: SecretEntry) => void }
+
 export type GetOpts = { exec?: Exec; env?: Env; fs?: SecretFs }
-export type SetOpts = GetOpts & { account?: string }
+export type SetOpts = GetOpts & { account?: string; backup?: Recorder; now?: () => Date }
 
 const missing = (err: unknown): boolean =>
   typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'ENOENT'
@@ -161,11 +171,123 @@ export const del = (service: string, opts: GetOpts = {}): boolean => {
   return remove(service, opts)
 }
 
-export const set = (service: string, value: string, opts: SetOpts = {}): void => {
-  if (kind(service) === 'env') throw new Error('barrito: env: secrets are read-only')
+const write = (service: string, value: string, opts: SetOpts): void => {
   if (kind(service) === 'file') {
     fileSet(service, value, opts.fs ?? fs)
     return
   }
   adapter().set(service, value, opts)
+}
+
+// every overwrite is preceded by a backup of the old value: a keyring item becomes
+// "barrito backup: <service> <ts>" in the same keyring (never on disk), a file: secret
+// a 0600 sibling "<file>.barrito-bak-<ts>"; the newest RETAIN per service are kept
+export const RETAIN = 3
+export const BACKUP = 'barrito backup: '
+const FILE_BAK = '.barrito-bak-'
+
+export const backupName = (service: string, ts: string): string =>
+  kind(service) === 'file' ? `${service}${FILE_BAK}${ts}` : `${BACKUP}${service} ${ts}`
+
+export type BackupItem = { service: string; ts: string; backup: string }
+
+export const parseBackup = (name: string): BackupItem | null => {
+  const m = name.match(/^barrito backup: (.+) (\S+)$/) ?? name.match(/^(file:.+)\.barrito-bak-([^/]+)$/)
+  return m ? { service: m[1] ?? '', ts: m[2] ?? '', backup: name } : null
+}
+
+const stamp = (now: Date): string => now.toISOString().slice(0, 19)
+
+const newest = (a: BackupItem, b: BackupItem): number => b.ts.localeCompare(a.ts)
+
+const fileBackups = (ref: string, files: SecretFs): BackupItem[] => {
+  const file = expand(ref.slice(5))
+  const base = `${path.basename(file)}${FILE_BAK}`
+  let names: string[] = []
+  try {
+    names = files.readdirSync(path.dirname(file))
+  } catch (err) {
+    if (!missing(err)) throw err
+  }
+  return names
+    .filter((n) => n.startsWith(base))
+    .map((n) => ({ service: ref, ts: n.slice(base.length), backup: `${ref}${FILE_BAK}${n.slice(base.length)}` }))
+}
+
+// barrito backup items, newest first: every keyring one, plus the siblings of the given file: refs
+export const backups = (opts: GetOpts & { files?: string[] } = {}): BackupItem[] => {
+  const files = opts.fs ?? fs
+  const ring = adapter().list?.(opts) ?? []
+  const keyed = ring.map(parseBackup).filter((b): b is BackupItem => b != null)
+  const onDisk = [...new Set(opts.files ?? [])].filter((r) => kind(r) === 'file').flatMap((r) => fileBackups(r, files))
+  return [...keyed, ...onDisk].sort(newest)
+}
+
+const listFor = (service: string, opts: GetOpts): BackupItem[] =>
+  kind(service) === 'file' ? fileBackups(service, opts.fs ?? fs).sort(newest) : backups(opts).filter((b) => b.service === service)
+
+export const drop = (ref: string, opts: GetOpts = {}): boolean => {
+  if (kind(ref) === 'file') {
+    (opts.fs ?? fs).rmSync(expand(ref.slice(5)), { force: true })
+    return true
+  }
+  return del(ref, opts)
+}
+
+const prune = (service: string, opts: GetOpts): void => {
+  listFor(service, opts).slice(RETAIN).forEach((b) => drop(b.backup, opts))
+}
+
+// one backup per (service, ts): a second overwrite inside the same run keeps the first —
+// that one holds the value from before barrito touched it
+const preserve = (service: string, old: string, opts: SetOpts): void => {
+  const ts = opts.backup?.ts ?? stamp((opts.now ?? (() => new Date()))())
+  const name = backupName(service, ts)
+  if (!has(name, opts)) write(name, old, { ...opts, account: 'barrito' })
+  opts.backup?.secret({ kind: 'keychain', service, account: opts.account ?? 'barrito', backup: name })
+}
+
+const current = (service: string, opts: SetOpts): string | null => {
+  try {
+    return get(service, opts)
+  } catch (err) {
+    const why = err instanceof Error ? err.message.split('\n')[0] : String(err)
+    throw refuse(`refusing to overwrite "${service}" — its current value couldn't be read for a backup (${why})`)
+  }
+}
+
+// a symlinked file: destination is refused before its old value is ever read
+const refuseLink = (ref: string, files: SecretFs): void => {
+  try {
+    if (files.lstatSync(expand(ref.slice(5))).isSymbolicLink()) throw refuse(`refusing to write ${ref} — destination is a symlink`)
+  } catch (err) {
+    if (!missing(err)) throw err
+  }
+}
+
+export const set = (service: string, value: string, opts: SetOpts = {}): void => {
+  if (kind(service) === 'env') throw new Error('barrito: env: secrets are read-only')
+  if (kind(service) === 'file') refuseLink(service, opts.fs ?? fs)
+  const old = current(service, opts)
+  const saving = old != null && old !== value
+  if (saving) preserve(service, old, opts)
+  write(service, value, opts)
+  if (saving) prune(service, opts)
+}
+
+// put a backup item's value back on its service (that write is itself backed up),
+// then delete the backup — false when the backup item is gone
+export const recover = (service: string, backup: string, opts: SetOpts = {}): boolean => {
+  const value = get(backup, opts)
+  if (value == null) return false
+  set(service, value, opts)
+  drop(backup, opts)
+  return true
+}
+
+// manual restore: the newest backup of a service, or the one taken at `from`
+export const restore = (service: string, opts: SetOpts & { from?: string } = {}): BackupItem | null => {
+  const pick = listFor(service, opts).find((b) => !opts.from || b.ts === opts.from)
+  if (!pick) return null
+  return recover(service, pick.backup, opts) ? pick : null
 }

@@ -86,10 +86,17 @@ export default async (argv: string[], ctx: Ctx & { io?: { exec?: Exec } }): Prom
       ui.outro(ui.c.red('nothing to restore'))
       return ctx.exit(1)
     }
-    restore(manifest, { exec: deps.exec, fs })
+    // keychain writes take the injected exec only: deps.exec drops stdin, which `security -i` needs
+    const restored = new Set<string>()
+    const report = (line: string): void => {
+      if (line.startsWith('! ')) return ui.warn(line.slice(2))
+      restored.add(line.replace(/^✓ restored keychain "(.*)"$/, '$1'))
+      ui.item(ui.mark('ok'), line.slice(2))
+    }
+    restore(manifest, { exec: deps.exec, fs, keyring: { exec: ctx.io?.exec }, report })
     ui.item(ui.c.green('+'), `restored from ${short(path.dirname(path.dirname(manifest)))}`)
     if (platform() === 'darwin') {
-      ownedRefs.forEach((ref) => {
+      ownedRefs.filter((ref) => !restored.has(ref)).forEach((ref) => {
         if (keychain.del(ref, { exec: deps.exec })) ui.item(ui.c.red('-'), `barrito-owned keychain item "${ref}"`)
       })
     }

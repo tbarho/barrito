@@ -16,6 +16,7 @@ import shimCmd from './cli/shim.ts'
 import { rcOpen, rcClose, rcLines } from './detect.ts'
 import type { Detected } from './detect.ts'
 import type { Backup } from './backup.ts'
+import type { Recorder } from './keychain/index.ts'
 import type { Builtin, CatalogModel, ClaudeSettings, Config, Exec, Identity, Keychain, ModelRules, Print } from './types.ts'
 
 const SHARE = ['rules', 'skills', 'agents', 'CLAUDE.md']
@@ -80,8 +81,9 @@ export interface SettingsIo {
 
 // cursor-keys writes to the Keychain, so apply's keychain must have set() —
 // the read-only Keychain shape would let a get-only default hide the crash
+// set() backs up any value it overwrites; the handle files it under this run's manifest
 export interface WriteKeychain extends Keychain {
-  set: (service: string, value: string, opts?: { account?: string }) => void
+  set: (service: string, value: string, opts?: { account?: string; backup?: Recorder }) => void
 }
 
 export interface ApplyOpts {
@@ -629,7 +631,7 @@ export const apply = async (actions: Action[], opts: ApplyOpts = {}): Promise<Co
           return
         }
         try {
-          kc.set(copy.to, value) // account "barrito", -T /usr/bin/security, value on stdin
+          kc.set(copy.to, value, { backup }) // account "barrito", -T /usr/bin/security, value on stdin
         } catch (err) {
           revert(copy)
           print(`  ! "${copy.to}" write failed (${why(err)}) — config keeps pointing at "${copy.from}"`)
@@ -644,7 +646,7 @@ export const apply = async (actions: Action[], opts: ApplyOpts = {}): Promise<Co
       action.moves.forEach(({ file, service: name }) => {
         const value = readKey(fs, file, 'CURSOR_API_KEY')
         if (value == null) return
-        kc.set(name, value)
+        kc.set(name, value, { backup })
         print(`  ${short(file)}: delete the export CURSOR_API_KEY line — the key now lives in Keychain "${name}"`)
       })
     }
@@ -704,6 +706,6 @@ export const apply = async (actions: Action[], opts: ApplyOpts = {}): Promise<Co
     }
   }
 
-  if (backup && backed) backup.write()
+  if (backup && (backed || backup.manifest.keychain.length)) backup.write()
   return config
 }

@@ -80,19 +80,40 @@ export const ownName = (slot: string, identity: string): string              // 
 export const owned = (ref: string): boolean                                  // ref.startsWith('barrito: ')
 export const get = (service: string, opts: GetOpts = {}) => string | null    // trims; empty → null; miss → null
 export const has = (service: string, opts: GetOpts = {}) => boolean         // existence WITHOUT reading the secret
-export const set = (service: string, value: string, opts: SetOpts = {}) => void
+export const set = (service: string, value: string, opts: SetOpts = {}) => void   // backs up any value it overwrites (below)
 export const del = (service: string, opts: GetOpts = {}) => boolean          // keyring only; barrito-owned items only
-// GetOpts = { exec?, env?, fs? }        SetOpts = GetOpts & { account?: string }
+export const backups = (opts: GetOpts & { files?: string[] } = {}) => BackupItem[]   // newest first; names only
+export const recover = (service, backup, opts: SetOpts = {}) => boolean      // backup's value → service (verified set), then delete backup; false = backup gone
+export const restore = (service, opts: SetOpts & { from?: string } = {}) => BackupItem | null  // newest, or the one at `from`
+export const RETAIN = 3
+// GetOpts = { exec?, env?, fs? }        SetOpts = GetOpts & { account?: string; backup?: Recorder; now?: () => Date }
+// Recorder = { ts, secret(entry: SecretEntry) } — the backup handle from src/backup.ts
+// SecretEntry = { kind: 'keychain', service, account, backup }   BackupItem = { service, ts, backup }
 ```
+
+**Backup before overwrite (in `set`, so no caller can skip it).** `set` reads the current value via `get`; if one exists and differs, it first writes it to `barrito backup: <service> <ts>` (account `barrito`, same verified write path, in the keyring — never on disk), or for `file:` a `0600` sibling `<file>.barrito-bak-<ts>`; then writes the new value; then prunes that service's backups to the newest `RETAIN`. `ts` is the backup handle's (`opts.backup.ts`) or the clock to the second. One backup per (service, ts): a second overwrite in the same run keeps the first. An unreadable current value refuses the write. With a handle, the backup is recorded in the manifest's `keychain` array by name only. New items and unchanged values: no backup.
 
 Dispatch by `kind`: `env:VAR` reads the environment (read-only — `set` throws); `file:/path` reads/writes a file (see guards); a plain name goes to the platform adapter picked by `platform()`, throwing a clear error on unsupported platforms.
 
 barrito owns its own Keychain items — `ownName` names, account `barrito`, created with `-T /usr/bin/security` so creation never asks and reads never prompt. Foreign items (made by other tools) are **copied** into owned items (`keychain-own` migrate action in `init`, and `barrito keychain own`) — one value read each, originals never modified or deleted; `has` probes existence via attributes only, so detection never prompts. `del` is for `uninstall --restore` removing the copies.
 
-`file:` guards — `set` writes only at 0600 (`O_EXCL` random temp name, fsync, atomic rename) and refuses a symlink destination or a group/world-writable parent dir without the sticky bit; `get` refuses to read through a symlink whose target isn't owned by the current uid or isn't private (group/world bits set).
+`file:` guards — `set` refuses a symlinked destination before reading the old value, writes only at 0600 (`O_EXCL` random temp name, fsync, atomic rename) and refuses a symlink destination or a group/world-writable parent dir without the sticky bit; `get` refuses to read through a symlink whose target isn't owned by the current uid or isn't private (group/world bits set).
 
 - `macos.ts`: `/usr/bin/security` (get: `find-generic-password -s <name> -w`, exit 44 = miss; `has`: `find-generic-password -s <name>` — attributes only, no `-w`, so it never triggers an access prompt; set: `add-generic-password -U -T /usr/bin/security` with the secret on **stdin**, never argv — the stable `security` binary goes on the item's trusted-app list; del: `delete-generic-password -s <name>`, no prompt for items we created).
-- `linux.ts`: `secret-tool` (get: exit 1 = miss; no binary / no D-Bus secrets service → actionable error naming `env:`/`file:`; set also via stdin). `available({ exec })` probes whether a keyring answers — `init` and `doctor` use it to pick ref forms. No `has`/`del` — `has` falls back to `get`, `del` throws (uninstall removal is darwin-only).
+- `macos.ts` also: `list`: `dump-keychain` (no `-d` — attribute names only, never a secret, never a prompt), parsed for `svce`.
+- `linux.ts`: `secret-tool` (get: exit 1 = miss; no binary / no D-Bus secrets service → actionable error naming `env:`/`file:`; set also via stdin; backup items carry the extra attribute `barrito-backup 1`). `available({ exec })` probes whether a keyring answers — `init` and `doctor` use it to pick ref forms. `del`: `clear service <name>`; `list`: `search --all barrito-backup 1`, keeping only `attribute.service` lines. No `has` — it falls back to `get`. Uninstall's owned-copy removal stays darwin-only.
+
+## `src/backup.ts` (owner: D)
+
+```ts
+export const create = (o: { ts?, dir?, fs?, now? } = {}) => Backup   // Backup = { root, ts, manifest, save, record, secret, write }
+export const restore = (manifestPath, o: { exec?, fs?, keyring?: SetOpts, report?: (line) => void } = {}) => BackupManifest
+export const read = (manifestPath, fs?) => BackupManifest
+export const latest = (dir = paths.backup, fs?) => string | null
+// BackupManifest = { version: 1, created, files, launchd, removed, keychain: SecretEntry[] }   (keychain optional on read)
+```
+
+`restore` puts files/symlinks back, re-bootstraps launchd, then for each `keychain` entry calls `keychain.recover` — reporting `✓ restored keychain "<service>"` or `! skipped keychain "<service>" (<reason>)` and continuing. `keyring` carries the keychain exec separately: a `security -i` write needs stdin.
 
 ## `src/service/index.ts` (owner: D)
 

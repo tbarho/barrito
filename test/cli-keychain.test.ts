@@ -233,10 +233,10 @@ test('command: trust alias runs own and prints a note (no deprecation hand-wring
   assert.equal(cfg.identities.work?.keychain.gateway, 'barrito: gateway work')
 })
 
-test('command: anything but `own`/`trust` → usage + exit 2', async () => {
+test('command: anything but own/trust/backups/restore → usage + exit 2', async () => {
   const printed: string[] = []
   const codes: number[] = []
   await keychain(['nonsense'], mkCtx(printed, codes), { exec: () => '' })
-  assert.deepEqual(printed, ['usage: barrito keychain own'])
+  assert.deepEqual(printed, ['usage: barrito keychain own | backups | restore <service> [--from <ts>]'])
   assert.deepEqual(codes, [2])
 })

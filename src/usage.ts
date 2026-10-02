@@ -31,6 +31,10 @@ catalog freshness, and hosts that need a restart. Exits non-zero on any ✗.
 
   barrito doctor --json`,
   keychain: `usage: barrito keychain own
+       barrito keychain backups
+       barrito keychain restore <service> [--from <ts>]
+
+own:
 
 Copy every keychain item the config references that barrito doesn't own (items
 made by other tools, e.g. the Vercel CLI) into barrito-owned items named
@@ -41,7 +45,19 @@ click Allow. The originals are never modified or deleted, so the tools that
 made them keep working; re-runs plan nothing. Linux: no-op. Never prints
 secret values.
 
-  barrito keychain own`,
+backups: list barrito's backup items — names and timestamps, never values.
+Every time barrito overwrites an existing keychain item it first copies the old
+value into "barrito backup: <service> <ts>" inside the keychain (never on disk;
+a file: secret gets a 0600 sibling "<file>.barrito-bak-<ts>"). The newest 3 per
+item are kept.
+
+restore: put one item back from its newest backup, or the one taken at --from
+<ts>. The value being replaced is itself backed up first; the used backup item
+is then deleted.
+
+  barrito keychain own
+  barrito keychain backups
+  barrito keychain restore "barrito: gateway work" --from 2026-10-02T14:05`,
   pin: `usage: barrito pin <identity> <max|model>
 
 Identity-wide default for every session. 'max' never falls back — quota errors
@@ -135,7 +151,9 @@ ASCII only (tmux-safe): parts are " | "-separated, a reroute shows as
   uninstall: `usage: barrito uninstall [--restore] [--yes]
 
 Remove the service, shims and settings fragments. --restore puts the backed-up
-setup back instead of leaving a bare machine.
+setup back instead of leaving a bare machine — files, launchd, and every keychain
+item barrito overwrote (from its in-keychain backup, which is then deleted; a
+missing backup is skipped with a warning).
 
   barrito uninstall --restore`,
 }

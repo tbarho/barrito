@@ -229,13 +229,15 @@ test('apply keychain-own: reads each foreign item once, writes the owned copy wi
   }, { kind: 'config', description: '', config }]
   await apply(actions, { fs, keychain, config, print: (s) => out.push(s) })
 
-  // one value read, then the owned copy via `security -i` (-T /usr/bin/security, value on stdin), then read back
+  // one value read, the owned target probed for an old value to back up (none), then the
+  // owned copy via `security -i` (-T /usr/bin/security, value on stdin), then read back
   assert.deepEqual(calls.map((c) => c.args), [
     ['find-generic-password', '-s', 'Vercel AI Gateway Work', '-w'],
+    ['find-generic-password', '-s', 'barrito: gateway work', '-w'],
     ['-i'],
     ['find-generic-password', '-s', 'barrito: gateway work', '-w'],
   ])
-  assert.deepEqual(parseSecurityI(calls[1]?.input ?? ''), { service: 'barrito: gateway work', account: 'barrito', value: 'gw-work-key', trusted: true })
+  assert.deepEqual(parseSecurityI(calls[2]?.input ?? ''), { service: 'barrito: gateway work', account: 'barrito', value: 'gw-work-key', trusted: true })
   assert.equal(calls.some((c) => c.args.includes('gw-work-key')), false, 'value never rides argv')
   assert.equal(calls.some((c) => c.args[0] === 'delete-generic-password'), false, 'originals are never deleted')
   assert.equal(config.identities.work?.keychain.gateway, 'barrito: gateway work')

@@ -13,6 +13,7 @@ import * as catalog from '../catalog.ts'
 import { builtins, find, realBin } from '../harnesses.ts'
 import { read as readSettings } from '../settings.ts'
 import { rcOf } from '../detect.ts'
+import { latest, read as readManifest } from '../backup.ts'
 import { base, fetchJson, nudges, parse as parseStatus, port } from './status.ts'
 import { account } from '../claude.ts'
 import { create } from '../ui.ts'
@@ -290,6 +291,24 @@ const ciRef = (id: string, ref: string | undefined, env: Env): DoctorCheck => {
     : { level: 'fail', text: `${id}: ${ref} not readable` }
 }
 
+// over-retention per item, and backups the newest manifest needs for uninstall --restore
+const backupBits = (config: Config | null, exec: Exec): DoctorCheck[] => {
+  const files = Object.values(config?.identities ?? {}).flatMap((i) => Object.values(i.keychain ?? {})).filter((r): r is string => typeof r === 'string')
+  let items: keychain.BackupItem[] = []
+  try { items = keychain.backups({ exec, files }) } catch { return [] }
+  const counts = items.reduce((memo, b) => memo.set(b.service, (memo.get(b.service) ?? 0) + 1), new Map<string, number>())
+  const over: DoctorCheck[] = [...counts].filter(([, n]) => n > keychain.RETAIN).map(([svc, n]) =>
+    ({ level: 'warn', text: `${n} backups of "${svc}" exceed retention (${keychain.RETAIN}) — barrito keychain backups` }))
+  const manifest = latest()
+  if (!manifest) return over
+  let entries: keychain.SecretEntry[] = []
+  try { entries = readManifest(manifest).keychain } catch { return over }
+  const names = new Set(items.map((b) => b.backup))
+  const gone: DoctorCheck[] = entries.filter((e) => !names.has(e.backup)).map((e) =>
+    ({ level: 'warn', text: `backup manifest ${path.basename(path.dirname(manifest))} references missing backup "${e.backup}" — uninstall --restore will skip "${e.service}"` }))
+  return [...over, ...gone]
+}
+
 export const diagnose = async (
   config: Config | null,
   {
@@ -327,7 +346,7 @@ export const diagnose = async (
   if (rtk) results.push(rtk)
   const notifier = notifierCheck(pf, pathEnv)
   if (notifier) results.push(notifier)
-  results.push(...modelsBits(config, settings.read), ...hosts(exec))
+  results.push(...modelsBits(config, settings.read), ...hosts(exec), ...backupBits(config, exec))
   return results
 }
 

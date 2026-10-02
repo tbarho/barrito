@@ -67,3 +67,7 @@ export const del = (service: string, { exec }: { exec?: Exec } = {}): boolean =>
   }
   return true
 }
+
+// item names only — dump-keychain without -d never reads a secret, so never prompts
+export const list = ({ exec }: { exec?: Exec } = {}): string[] =>
+  [...String(security(exec, ['dump-keychain'])).matchAll(/"svce"<blob>="(.*)"\s*$/gm)].map((m) => m[1] ?? '')

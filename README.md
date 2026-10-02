@@ -207,6 +207,18 @@ A keychain slot in config.toml takes three ref forms:
 
 On macOS barrito owns its Keychain items: names `barrito: <slot> <identity>`, account `barrito`, created with `-T /usr/bin/security` — creation never asks, and reads through `/usr/bin/security` never prompt again. When `init` finds the planned config pointing at an item made by another tool (e.g. `Vercel AI Gateway` from the Vercel CLI), it copies it once into the barrito-owned item — one macOS prompt per key — and repoints the config; the original is never modified or deleted, so the tool that made it keeps working. `barrito keychain own` does the same standalone for an existing config, and `uninstall --restore` removes the copies. A re-run of `init` where the config already points at `barrito: …` items plans zero keychain actions.
 
+### Every overwrite is backed up first
+
+barrito never overwrites an existing secret without saving the old value. Before any write that would replace an item (`init`, `keychain own`, `keychain restore`, `uninstall --restore`), it reads the current value and copies it into `barrito backup: <service> <ts>` (account `barrito`) **inside the keyring** — never on disk — through the same verified write path. A `file:` secret gets a `0600` sibling `<file>.barrito-bak-<ts>` instead. New items and unchanged values make no backup; if the current value can't be read, the overwrite is refused. The newest 3 backups per item are kept. `init` records each backup by name in its backup manifest (names only, never values).
+
+```
+barrito keychain backups                                            # names + timestamps, never values
+barrito keychain restore "barrito: gateway work"                    # newest backup
+barrito keychain restore "barrito: gateway work" --from 2026-10-02T14:05
+```
+
+A restore backs up the value it replaces, then deletes the backup it used. `doctor` warns when an item has more than 3 backups or the newest manifest names a backup that is gone.
+
 `file:` is guarded both ways. barrito writes secrets only at `0600`, atomically, and refuses to write through a symlink or into a group/world-writable directory without the sticky bit. Reads refuse a symlink whose target isn't owned by you or isn't private. `env:` refs are read-only — `set` throws. `doctor` reports each ref by kind, so a keyring name on a box with no keyring is a visible ✗, not a silent failure.
 
 No secrets in the config file either way. The router reads them itself and agents only ever hold the handle `barrito:<id>` — cursor-agent is the one exception, it needs the raw Cursor key in its env.
@@ -293,7 +305,7 @@ The state dir holds `which.json` (identity cache), `tiers.json` (tier state), `s
 barrito uninstall --restore
 ```
 
-Removes the service, generated shims, the marked PATH block and settings fragments. `--restore` puts back the previous router, shims and symlinks that `init` backed up.
+Removes the service, generated shims, the marked PATH block and settings fragments. `--restore` puts back the previous router, shims and symlinks that `init` backed up, and every keychain item `init` overwrote — each from its in-keyring backup (verified write, then the backup item is deleted; a missing backup is skipped with a warning).
 
 ## Development
 

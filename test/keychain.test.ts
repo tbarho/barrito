@@ -201,7 +201,7 @@ test('index has: keyring goes to the adapter, env:/file: fall back to get', () =
   assert.equal(has('env:NOPE', { env: {} }), false)
 })
 
-test('index del: keyring only — env: is read-only, file: is refused', () => {
+test('index del: keyring only (security delete / secret-tool clear) — env: is read-only, file: is refused', () => {
   withEnv({ BARRITO_PLATFORM: 'darwin' }, () => {
     const { exec } = recorder(() => '')
     assert.equal(del('barrito: gateway work', { exec }), true)
@@ -209,7 +209,9 @@ test('index del: keyring only — env: is read-only, file: is refused', () => {
     assert.throws(() => del('file:/tmp/k', { fs: fakeFs() }), /barrito: not a keyring item/)
   })
   withEnv({ BARRITO_PLATFORM: 'linux' }, () => {
-    assert.throws(() => del('barrito: gateway work', { exec: () => '' }), /barrito: keyring deletion is unsupported/)
+    const { calls, exec } = recorder(() => '')
+    assert.equal(del('barrito: gateway work', { exec }), true)
+    assert.deepEqual(calls[0]?.args, ['clear', 'service', 'barrito: gateway work'])
   })
 })
 
@@ -254,6 +256,8 @@ const fakeFs = (over: Partial<SecretFs> = {}): SecretFs => ({
   closeSync: () => {},
   renameSync: () => {},
   mkdirSync: () => {},
+  readdirSync: () => [],
+  rmSync: () => {},
   ...over,
 })
 
