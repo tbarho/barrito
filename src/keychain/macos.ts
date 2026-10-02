@@ -36,16 +36,26 @@ export const set = (service: string, value: string, { account = 'barrito', exec 
   security(exec, ['add-generic-password', '-U', '-s', service, '-a', account, '-T', '/usr/bin/security', '-w'], { input: `${value}\n${value}\n` })
 }
 
-// the item's account name, from the attributes dump — a trust re-save preserves it
-// (`find-generic-password -s <name>` prints `    "acct"<blob>="…"`, no secret)
-export const account = (service: string, { exec }: { exec?: Exec } = {}): string | null => {
-  let out: string
+// existence without reading the secret: no -w, so only the item's attributes are
+// touched — an item another tool made can be probed without an access prompt
+export const has = (service: string, { exec }: { exec?: Exec } = {}): boolean => {
   try {
-    out = security(exec, ['find-generic-password', '-s', service])
+    security(exec, ['find-generic-password', '-s', service])
   } catch (err) {
-    if (notFound(err)) return null
+    if (notFound(err)) return false
     throw err
   }
-  const hit = /"acct"<blob>="([^"]*)"/.exec(out)
-  return hit?.[1] || null
+  return true
+}
+
+// delete one of barrito's own items — items we created carry -T /usr/bin/security, so
+// this never prompts; returns false when the item is already gone
+export const del = (service: string, { exec }: { exec?: Exec } = {}): boolean => {
+  try {
+    security(exec, ['delete-generic-password', '-s', service])
+  } catch (err) {
+    if (notFound(err)) return false
+    throw err
+  }
+  return true
 }

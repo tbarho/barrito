@@ -34,6 +34,7 @@ export type Action =
   | { kind: 'shims'; description: string; names: string[]; remove: string[] }
   | { kind: 'envrc'; description: string; links: string[] }
   | { kind: 'path-rc'; description: string; file: string; lines: string[] }
+  | { kind: 'keychain-own'; description: string; copies: { id: string; slot: string; from: string; to: string }[] }
   | { kind: 'cursor-keys'; description: string; moves: { file: string; service: string }[] }
   | { kind: 'dir'; description: string; dir: string }
   | { kind: 'share'; description: string; items: { from: string; to: string }[] }
@@ -293,12 +294,44 @@ export const plan = (detected: Detected, answers: Answers): Action[] => {
     })
   }
 
+  // barrito owns its own Keychain items: a foreign item the planned config still points
+  // at (made by another tool, e.g. the Vercel CLI) is copied once into "barrito: <slot>
+  // <identity>" and the slot rewritten — macOS then prompts once per key, never again.
+  // The original is never modified or deleted; the tool that made it keeps using it.
+  const copies: { id: string; slot: string; from: string; to: string }[] = []
+  if (pf === 'darwin') {
+    for (const [id, identity] of Object.entries(next.identities)) {
+      for (const [slot, ref] of Object.entries(identity.keychain ?? {})) {
+        if (typeof ref !== 'string' || !ref) continue
+        if (keychain.kind(ref) !== 'keyring' || keychain.owned(ref)) continue
+        if (detected.keychain[ref] !== true) continue // not in the Keychain yet — keep pointing at the name it will appear under
+        const to = keychain.ownName(slot, id)
+        copies.push({ id, slot, from: ref, to })
+        identity.keychain[slot] = to
+      }
+    }
+  }
+  if (copies.length) {
+    actions.push({
+      kind: 'keychain-own',
+      description: `copy ${copies.length} keychain key${copies.length === 1 ? '' : 's'} into barrito-owned items (one macOS prompt each)`,
+      copies,
+    })
+  }
+
   const moves = legacy.envrcKeys.reduce<{ file: string; service: string }[]>((memo, { file, var: name }) => {
     if (name !== 'CURSOR_API_KEY') return memo
     const identity = identityFor(next, path.dirname(file))
-    const target = identity?.keychain?.cursor
+    let target = identity?.keychain?.cursor ?? ''
     // env:/file: refs can't receive a key — only keyring names can
-    if (!target || keychain.kind(target) !== 'keyring' || detected.keychain[target]) return memo
+    if (!target || keychain.kind(target) !== 'keyring') return memo
+    // an item init creates itself is barrito-owned from birth; an existing foreign one
+    // was just adopted above, and the copied key wins over the .envrc line
+    if (pf === 'darwin' && !keychain.owned(target)) {
+      target = keychain.ownName('cursor', identity!.id)
+      identity!.keychain.cursor = target
+    }
+    if (copies.some((c) => c.to === target) || detected.keychain[target]) return memo
     if (memo.some((m) => m.file === file)) return memo
     memo.push({ file, service: target })
     return memo
@@ -444,6 +477,11 @@ const readKey = (fs: Fs, file: string, name: string): string | null => {
 const isMissing = (err: unknown): boolean =>
   typeof err === 'object' && err !== null && (err as { missing?: unknown }).missing === true
 
+const why = (err: unknown): string => {
+  const msg = err instanceof Error ? err.message : String(err)
+  return msg.split('\n')[0] ?? 'error'
+}
+
 // uninstall: remove exactly our marked block — a hand-written PATH line is never touched.
 // No init backup manifest covering the rc → a plain copy lands beside it first; a malformed
 // block (no close marker) loses only the marker line + the exact barrito PATH line after it.
@@ -569,6 +607,39 @@ export const apply = async (actions: Action[], opts: ApplyOpts = {}): Promise<Co
       const block = [rcOpen, ...action.lines, rcClose].join('\n')
       fs.writeFileSync(action.file, text ? `${text}${text.endsWith('\n') ? '' : '\n'}${block}\n` : `${block}\n`)
     }
+    if (action.kind === 'keychain-own') {
+      // the slot rewrite above points the config at the owned item — a failed copy must
+      // point it back at the original before the config action saves it
+      const revert = (copy: { id: string; slot: string; from: string }): void => {
+        const identity = opts.config?.identities?.[copy.id]
+        if (identity) identity.keychain[copy.slot] = copy.from
+      }
+      action.copies.forEach((copy) => {
+        let value: string | null = null
+        try {
+          value = kc.get(copy.from) // the one prompt: read each foreign item exactly once
+        } catch (err) {
+          revert(copy)
+          print(`  ! "${copy.from}" unreadable (${why(err)}) — config keeps pointing at it`)
+          return
+        }
+        if (value == null) {
+          revert(copy)
+          print(`  ! "${copy.from}" holds no value — config keeps pointing at it`)
+          return
+        }
+        try {
+          kc.set(copy.to, value) // account "barrito", -T /usr/bin/security, value on stdin
+        } catch (err) {
+          revert(copy)
+          print(`  ! "${copy.to}" write failed (${why(err)}) — config keeps pointing at "${copy.from}"`)
+          return
+        }
+        const identity = opts.config?.identities?.[copy.id]
+        if (identity) identity.keychain[copy.slot] = copy.to
+        print(`  ✓ "${copy.from}" → "${copy.to}" — the original is never touched`)
+      })
+    }
     if (action.kind === 'cursor-keys') {
       action.moves.forEach(({ file, service: name }) => {
         const value = readKey(fs, file, 'CURSOR_API_KEY')
@@ -603,6 +674,10 @@ export const apply = async (actions: Action[], opts: ApplyOpts = {}): Promise<Co
     }
     if (action.kind === 'config') {
       config = action.config
+      // config.toml rides the backup manifest, so uninstall --restore points the slots
+      // back at the items they referenced before barrito adopted them
+      const file = opts.configFile ?? paths.config
+      backed = keep(file) || backed
       cfg.save(config, opts.configFile)
     }
     if (action.kind === 'models') {

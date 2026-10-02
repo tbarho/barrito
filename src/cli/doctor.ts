@@ -107,12 +107,12 @@ const legacy = (exec: Exec): DoctorCheck | null => {
 
 const loggedIn = (dir: string): boolean => account(dir).loggedIn
 
-// keyring names read as "keychain item"; env:/file: refs print as themselves
-const label = (ref: string): string => keychain.kind(ref) === 'keyring' ? `keychain item "${ref}"` : ref
+// keyring names read as "keychain"; env:/file: refs print as themselves
+const label = (ref: string): string => keychain.kind(ref) === 'keyring' ? `keychain "${ref}"` : ref
 
 // a get that throws (linux keyring unavailable) is not the same as a missing secret;
 // a macOS access-control denial ("user interaction is not allowed" / user canceled)
-// has its own fix — re-trust the item so /usr/bin/security stops prompting
+// has its own fix — copy the item into a barrito-owned one so /usr/bin/security stops prompting
 const read = (kc: Keychain, ref: string): { ok: boolean; missing: boolean; denied: boolean } => {
   try { return { ok: kc.get(ref) != null, missing: true, denied: false } } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -132,7 +132,7 @@ const identityBits = (kc: Keychain, id: string, identity: Identity): DoctorCheck
     parts.push(r.ok
       ? ['ok', 'gateway key']
       : r.denied
-        ? ['warn', `gateway ${label(gw)} prompts for keychain access — barrito keychain trust`]
+        ? ['warn', `gateway ${label(gw)} prompts for keychain access — barrito keychain own`]
         : r.missing
           ? ['fail', `gateway ${label(gw)} missing`]
           : ['warn', `gateway ${label(gw)} unreadable — no keyring (env:/file: refs work without one)`])
@@ -145,7 +145,7 @@ const identityBits = (kc: Keychain, id: string, identity: Identity): DoctorCheck
     parts.push(r.ok
       ? ['ok', 'cursor key']
       : r.denied
-        ? ['warn', `cursor ${label(cur)} prompts for keychain access — barrito keychain trust`]
+        ? ['warn', `cursor ${label(cur)} prompts for keychain access — barrito keychain own`]
         : ['warn', `cursor ${label(cur)} ${r.missing ? 'missing' : 'unreadable — no keyring'}`])
   }
   const level = parts.some((p) => p[0] === 'fail') ? 'fail' : parts.some((p) => p[0] === 'warn') ? 'warn' : 'ok'

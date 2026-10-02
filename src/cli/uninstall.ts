@@ -7,6 +7,7 @@ import { paths, home, platform } from '../paths.ts'
 import * as service from '../service/index.ts'
 import * as settings from '../settings.ts'
 import { restore, latest } from '../backup.ts'
+import * as keychain from '../keychain/index.ts'
 import { unwrapStatusline, short, stripRcBlock } from '../migrate.ts'
 import { marker, rcOf } from '../detect.ts'
 import type { Config, Ctx, Exec, Identity } from '../types.ts'
@@ -67,6 +68,11 @@ export default async (argv: string[], ctx: Ctx & { io?: { exec?: Exec } }): Prom
   Object.values(config.identities ?? {}).forEach((identity) => cleanSettings(identity, config))
 
   if (values.restore) {
+    // barrito-owned copies the current config points at — restore brings config.toml
+    // back to the items it referenced before adoption, so the copies are barrito's to
+    // remove (we created them with -T /usr/bin/security: deleting needs no prompt)
+    const ownedRefs = [...new Set(Object.values(config.identities ?? {}).flatMap((i) => Object.values(i.keychain ?? {})))]
+      .filter((ref): ref is string => typeof ref === 'string' && keychain.kind(ref) === 'keyring' && keychain.owned(ref))
     const manifest = latest(paths.backup, fs)
     if (!manifest) {
       p.log.warn('no backup manifest found')
@@ -74,6 +80,11 @@ export default async (argv: string[], ctx: Ctx & { io?: { exec?: Exec } }): Prom
     }
     restore(manifest, { exec: deps.exec, fs })
     p.log.message(`restored from ${short(path.dirname(path.dirname(manifest)))}`)
+    if (platform() === 'darwin') {
+      ownedRefs.forEach((ref) => {
+        if (keychain.del(ref, { exec: deps.exec })) p.log.message(`- removed barrito-owned keychain item "${ref}"`)
+      })
+    }
   }
 
   p.outro(`barrito removed.${values.restore ? ' The old setup is back.' : ` config left at ${short(paths.config)} — delete it to fully remove`}`)

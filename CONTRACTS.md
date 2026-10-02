@@ -56,7 +56,7 @@ Resolved config shape (what `load` returns) — `keychain` slots accept any ref 
       share_from: null | '/Users/x/.claude',
       fallback: [],                        // missing = "stop and tell me"; init writes the user's choice, never a paid chain
       match: { remotes: ['github.com/acme/*'], paths: ['/Users/x/Code/acme/**'] },
-      keychain: { gateway: 'Vercel AI Gateway Work', cursor: 'Cursor Work' },  // 'env:VAR' and 'file:/path' allowed
+      keychain: { gateway: 'barrito: gateway work', cursor: 'barrito: cursor work' },  // barrito-owned items; any plain name, 'env:VAR' and 'file:/path' allowed
       transforms: { rtk: true, caveman: 'lite' },   // optional per-identity token-saver overrides (partial; see src/router/transforms.ts)
     },
   },
@@ -76,17 +76,23 @@ Resolved config shape (what `load` returns) — `keychain` slots accept any ref 
 
 ```ts
 export const kind = (ref: string): 'env' | 'file' | 'keyring'
+export const ownName = (slot: string, identity: string): string              // "barrito: <slot> <identity>"
+export const owned = (ref: string): boolean                                  // ref.startsWith('barrito: ')
 export const get = (service: string, opts: GetOpts = {}) => string | null    // trims; empty → null; miss → null
+export const has = (service: string, opts: GetOpts = {}) => boolean         // existence WITHOUT reading the secret
 export const set = (service: string, value: string, opts: SetOpts = {}) => void
+export const del = (service: string, opts: GetOpts = {}) => boolean          // keyring only; barrito-owned items only
 // GetOpts = { exec?, env?, fs? }        SetOpts = GetOpts & { account?: string }
 ```
 
 Dispatch by `kind`: `env:VAR` reads the environment (read-only — `set` throws); `file:/path` reads/writes a file (see guards); a plain name goes to the platform adapter picked by `platform()`, throwing a clear error on unsupported platforms.
 
+barrito owns its own Keychain items — `ownName` names, account `barrito`, created with `-T /usr/bin/security` so creation never asks and reads never prompt. Foreign items (made by other tools) are **copied** into owned items (`keychain-own` migrate action in `init`, and `barrito keychain own`) — one value read each, originals never modified or deleted; `has` probes existence via attributes only, so detection never prompts. `del` is for `uninstall --restore` removing the copies.
+
 `file:` guards — `set` writes only at 0600 (`O_EXCL` random temp name, fsync, atomic rename) and refuses a symlink destination or a group/world-writable parent dir without the sticky bit; `get` refuses to read through a symlink whose target isn't owned by the current uid or isn't private (group/world bits set).
 
-- `macos.ts`: `/usr/bin/security` (get: `find-generic-password -s <name> -w`, exit 44 = miss; set: `add-generic-password -U -T /usr/bin/security` with the secret on **stdin**, never argv — the stable `security` binary goes on the item's trusted-app list; `account(name)` reads the item's `"acct"` from the attributes dump, for `barrito keychain trust` re-saves).
-- `linux.ts`: `secret-tool` (get: exit 1 = miss; no binary / no D-Bus secrets service → actionable error naming `env:`/`file:`; set also via stdin). `available({ exec })` probes whether a keyring answers — `init` and `doctor` use it to pick ref forms.
+- `macos.ts`: `/usr/bin/security` (get: `find-generic-password -s <name> -w`, exit 44 = miss; `has`: `find-generic-password -s <name>` — attributes only, no `-w`, so it never triggers an access prompt; set: `add-generic-password -U -T /usr/bin/security` with the secret on **stdin**, never argv — the stable `security` binary goes on the item's trusted-app list; del: `delete-generic-password -s <name>`, no prompt for items we created).
+- `linux.ts`: `secret-tool` (get: exit 1 = miss; no binary / no D-Bus secrets service → actionable error naming `env:`/`file:`; set also via stdin). `available({ exec })` probes whether a keyring answers — `init` and `doctor` use it to pick ref forms. No `has`/`del` — `has` falls back to `get`, `del` throws (uninstall removal is darwin-only).
 
 ## `src/service/index.ts` (owner: D)
 

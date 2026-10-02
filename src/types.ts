@@ -24,6 +24,7 @@ export type Log = (line: string) => void
 
 export interface Keychain {
   get: (service: string) => string | null
+  has?: (service: string) => boolean
   set?: (service: string, value: string, opts?: { account?: string }) => void
 }
 

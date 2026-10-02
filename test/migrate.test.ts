@@ -11,6 +11,7 @@ import { load } from '../src/config.ts'
 import { create as createBackup } from '../src/backup.ts'
 import { plan, apply, seed, wrapStatusline, unwrapStatusline, stripRcBlock } from '../src/migrate.ts'
 import type { Action, Answers } from '../src/migrate.ts'
+import * as idx from '../src/keychain/index.ts'
 import { viaNpx } from '../src/cli/init.ts'
 import * as settings from '../src/settings.ts'
 import * as models from '../src/models.ts'
@@ -104,17 +105,28 @@ test('plan is pure: no writes, stable order', () => {
   assert.deepEqual(snap(home), before)
 
   assert.deepEqual(actions.map((a) => a.kind), [
-    'backup', 'bootout', 'shims', 'envrc', 'cursor-keys', 'dir', 'share', 'histories',
+    'backup', 'bootout', 'shims', 'envrc', 'keychain-own', 'cursor-keys', 'dir', 'share', 'histories',
     'settings', 'opencode', 'config', 'note', 'models', 'service',
   ])
   assert.deepEqual(at(actions[0], 'backup').files.length, 9)
   assert.deepEqual(at(actions[2], 'shims').names.sort(), ['claude', 'codex', 'cursor-agent', 'opencode'])
   assert.deepEqual(at(actions[2], 'shims').remove.map((f) => path.basename(f)), ['_ai-gateway-env.sh'])
   assert.deepEqual(at(actions[3], 'envrc').links.length, 3)
-  assert.deepEqual(at(actions[4], 'cursor-keys').moves, [
-    { file: path.join(home, 'Code', 'acme', '.envrc'), service: 'Cursor Work' },
-    { file: path.join(home, 'Code', 'you', '.envrc'), service: 'Cursor' },
+  // the foreign gateway items exist in the fakes → adopted, slots rewritten to barrito-owned names
+  assert.deepEqual(at(actions[4], 'keychain-own').copies, [
+    { id: 'work', slot: 'gateway', from: 'Vercel AI Gateway Work', to: 'barrito: gateway work' },
+    { id: 'personal', slot: 'gateway', from: 'Vercel AI Gateway', to: 'barrito: gateway personal' },
   ])
+  assert.match(at(actions[4], 'keychain-own').description, /copy 2 keychain keys into barrito-owned items \(one macOS prompt each\)/)
+  // the missing cursor items are created by the moves — barrito-owned from birth
+  assert.deepEqual(at(actions[5], 'cursor-keys').moves, [
+    { file: path.join(home, 'Code', 'acme', '.envrc'), service: 'barrito: cursor work' },
+    { file: path.join(home, 'Code', 'you', '.envrc'), service: 'barrito: cursor personal' },
+  ])
+  const cfgAction = at(actions.find((a) => a.kind === 'config'), 'config')
+  assert.equal(cfgAction.config.identities.work?.keychain.gateway, 'barrito: gateway work')
+  assert.equal(cfgAction.config.identities.work?.keychain.cursor, 'barrito: cursor work')
+  assert.equal(cfgAction.config.identities.personal?.keychain.gateway, 'barrito: gateway personal')
 })
 
 test('seed pins every live picker row (incl. $10 Astra), reports retired', () => {
@@ -178,9 +190,14 @@ test('apply: cursor keys land in keychain, never in stdout; statusline wraps; sh
     sleep: async () => {},
   })
 
-  assert.equal(f.keychain.items['Cursor Work'], 'fake-cursor-work-a1b2c3')
-  assert.equal(f.keychain.items['Cursor'], 'fake-cursor-personal-99aa88')
+  assert.equal(f.keychain.items['barrito: cursor work'], 'fake-cursor-work-a1b2c3')
+  assert.equal(f.keychain.items['barrito: cursor personal'], 'fake-cursor-personal-99aa88')
+  // the foreign gateway items were adopted: read once each, copied, originals untouched
+  assert.equal(f.keychain.items['barrito: gateway work'], 'gw-work-key')
+  assert.equal(f.keychain.items['barrito: gateway personal'], 'gw-personal-key')
+  assert.equal(f.keychain.items['Vercel AI Gateway Work'], 'gw-work-key')
   assert.ok(!out.join('\n').includes('fake-cursor'))
+  assert.ok(!out.join('\n').includes('gw-work-key'), 'secret values never print')
 
   const work = settings.read(path.join(home, '.claude'))
   assert.equal(work.env!.ANTHROPIC_BASE_URL, 'http://127.0.0.1:4141')
@@ -194,6 +211,58 @@ test('apply: cursor keys land in keychain, never in stdout; statusline wraps; sh
 
   assert.equal(fs.lstatSync(path.join(home, '.claude-personal', 'skills')).isSymbolicLink(), true)
   assert.ok(fs.existsSync(path.join(home, '.claude-personal', 'projects')))
+})
+
+test('apply keychain-own: reads each foreign item once, writes the owned copy with -T + stdin; config slots rewritten; originals never deleted', async () => {
+  type Call = { bin: string; args: string[]; input?: string }
+  const calls: Call[] = []
+  const exec = (bin: string, args: string[], opts: { input?: unknown } = {}): string => {
+    calls.push({ bin, args, input: typeof opts.input === 'string' ? opts.input : undefined })
+    if (args[0] === 'find-generic-password') return 'gw-work-key\n'
+    return ''
+  }
+  const keychain = {
+    get: (s: string): string | null => idx.get(s, { exec }),
+    set: (s: string, v: string): void => idx.set(s, v, { exec }),
+  }
+  const out: string[] = []
+  const config = next()
+  const actions: Action[] = [{
+    kind: 'keychain-own',
+    description: '',
+    copies: [{ id: 'work', slot: 'gateway', from: 'Vercel AI Gateway Work', to: 'barrito: gateway work' }],
+  }, { kind: 'config', description: '', config }]
+  await apply(actions, { fs, keychain, config, print: (s) => out.push(s) })
+
+  // one value read, then the owned copy: -T /usr/bin/security, value twice on stdin
+  assert.deepEqual(calls, [
+    { bin: '/usr/bin/security', args: ['find-generic-password', '-s', 'Vercel AI Gateway Work', '-w'], input: undefined },
+    { bin: '/usr/bin/security', args: ['add-generic-password', '-U', '-s', 'barrito: gateway work', '-a', 'barrito', '-T', '/usr/bin/security', '-w'], input: 'gw-work-key\ngw-work-key\n' },
+  ])
+  assert.equal(calls.some((c) => c.args[0] === 'delete-generic-password'), false, 'originals are never deleted')
+  assert.equal(config.identities.work?.keychain.gateway, 'barrito: gateway work')
+  assert.match(out.join('\n'), /✓ "Vercel AI Gateway Work" → "barrito: gateway work" — the original is never touched/)
+  assert.ok(!out.join('\n').includes('gw-work-key'), 'the value never prints')
+})
+
+test('apply keychain-own: a denied read reverts the slot so the config keeps pointing at the original', async () => {
+  const exec = (): string => {
+    throw new Error('security: SecKeychainItemCopyAttributesAndData: User canceled the operation.')
+  }
+  const keychain = {
+    get: (s: string): string | null => idx.get(s, { exec }),
+    set: (s: string, v: string): void => idx.set(s, v, { exec }),
+  }
+  const out: string[] = []
+  const config = next()
+  const actions: Action[] = [{
+    kind: 'keychain-own',
+    description: '',
+    copies: [{ id: 'work', slot: 'gateway', from: 'Vercel AI Gateway Work', to: 'barrito: gateway work' }],
+  }, { kind: 'config', description: '', config }]
+  await apply(actions, { fs, keychain, config, print: (s) => out.push(s) })
+  assert.equal(config.identities.work?.keychain.gateway, 'Vercel AI Gateway Work')
+  assert.match(out.join('\n'), /! "Vercel AI Gateway Work" unreadable/)
 })
 
 test('apply models: prints the synced dir paths, never [object Object]', async () => {

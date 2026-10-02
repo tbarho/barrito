@@ -9,6 +9,8 @@ import type { Exec } from '../types.ts'
 type Adapter = {
   get: (service: string, opts?: { exec?: Exec }) => string | null
   set: (service: string, value: string, opts?: { account?: string; exec?: Exec }) => void
+  has?: (service: string, opts?: { exec?: Exec }) => boolean
+  del?: (service: string, opts?: { exec?: Exec }) => boolean
 }
 
 const adapters: Record<string, Adapter> = { darwin: macos, linux }
@@ -22,6 +24,12 @@ const adapter = (): Adapter => {
 // what a keychain slot in config.toml refers to — doctor reports per kind
 export const kind = (ref: string): 'env' | 'file' | 'keyring' =>
   ref.startsWith('env:') ? 'env' : ref.startsWith('file:') ? 'file' : 'keyring'
+
+// barrito owns its own Keychain items: "barrito: <slot> <identity>", account "barrito",
+// created with -T /usr/bin/security — creation never asks, reads never prompt again.
+// Items made by other tools are copied into these, never modified.
+export const ownName = (slot: string, identity: string): string => `barrito: ${slot} ${identity}`
+export const owned = (ref: string): boolean => ref.startsWith('barrito: ')
 
 type Env = Record<string, string | undefined>
 
@@ -133,6 +141,24 @@ export const get = (service: string, opts: GetOpts = {}): string | null => {
     }
   }
   return adapter().get(service, opts)
+}
+
+// existence without touching the secret — on macOS this reads attributes only (no
+// -w), so probing an item another tool made never triggers an access prompt
+export const has = (service: string, opts: GetOpts = {}): boolean => {
+  if (kind(service) !== 'keyring') return get(service, opts) != null
+  const probe = adapter().has
+  return probe ? probe(service, opts) : get(service, opts) != null
+}
+
+// remove a keyring item — only ever called on barrito-owned items (we created them
+// with -T /usr/bin/security, so deleting needs no approval)
+export const del = (service: string, opts: GetOpts = {}): boolean => {
+  if (kind(service) === 'env') throw new Error('barrito: env: secrets are read-only')
+  if (kind(service) === 'file') throw new Error(`barrito: not a keyring item: ${service}`)
+  const remove = adapter().del
+  if (!remove) throw new Error(`barrito: keyring deletion is unsupported on "${platform()}"`)
+  return remove(service, opts)
 }
 
 export const set = (service: string, value: string, opts: SetOpts = {}): void => {

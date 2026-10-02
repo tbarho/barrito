@@ -1,13 +1,18 @@
 import { execFileSync } from 'node:child_process'
 import { platform } from '../paths.ts'
 import * as keychain from '../keychain/index.ts'
-import { account as accountOf } from '../keychain/macos.ts'
-import { keyringRefs } from '../detect.ts'
-import type { CommandCtx, Exec } from '../types.ts'
+import * as cfg from '../config.ts'
+import type { CommandCtx, Config, Exec, Identity } from '../types.ts'
 
-export interface TrustOpts {
+export interface OwnOpts {
   exec?: Exec
   platform?: 'darwin' | 'linux'
+  save?: (config: Config) => void
+}
+
+export interface Owned {
+  lines: string[]
+  changed: boolean
 }
 
 const realExec: Exec = (bin, args) => execFileSync(bin, args, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] })
@@ -17,45 +22,62 @@ const why = (err: unknown): string => {
   return msg.split('\n')[0] ?? 'error'
 }
 
-// re-save one item with /usr/bin/security on its trusted-app list — the value is read
-// once (one prompt, expected) and goes back on stdin; it is never printed
-const one = (name: string, exec: Exec): string[] => {
-  const acct = accountOf(name, { exec })
-  if (acct == null) return [`! skipped "${name}" (not in Keychain)`]
-  let value: string | null
-  try {
-    value = keychain.get(name, { exec })
-  } catch (err) {
-    return [`! skipped "${name}" (read failed: ${why(err)})`]
+// copy every foreign keyring ref the config holds into a barrito-owned item
+// ("barrito: <slot> <identity>", account "barrito", -T /usr/bin/security) and rewrite
+// the config's slots — one read per item, originals never modified or deleted
+export const own = (
+  identities: Record<string, Identity>,
+  { exec = realExec, platform: pf = platform() }: OwnOpts = {},
+): Owned => {
+  if (pf === 'linux') return { lines: ['no Keychain on linux — nothing to own'], changed: false }
+  const out: string[] = []
+  const readOnce = new Map<string, string | null>()
+  let changed = false
+  for (const [id, identity] of Object.entries(identities)) {
+    for (const [slot, ref] of Object.entries(identity.keychain ?? {})) {
+      if (typeof ref !== 'string' || !ref || keychain.kind(ref) !== 'keyring') continue
+      if (keychain.owned(ref)) {
+        out.push(`✓ "${ref}" already barrito-owned`)
+        continue
+      }
+      if (!readOnce.has(ref)) {
+        try {
+          readOnce.set(ref, keychain.get(ref, { exec })) // the one prompt per foreign item
+        } catch (err) {
+          readOnce.set(ref, null)
+          out.push(`! skipped "${ref}" (read failed: ${why(err)})`)
+          continue
+        }
+      }
+      const value = readOnce.get(ref) ?? null
+      if (value == null) {
+        out.push(`! skipped "${ref}" (not in Keychain)`)
+        continue
+      }
+      const to = keychain.ownName(slot, id)
+      try {
+        keychain.set(to, value, { exec }) // value on stdin, never argv
+      } catch (err) {
+        out.push(`! skipped "${ref}" (write failed: ${why(err)})`)
+        continue
+      }
+      identity.keychain[slot] = to
+      changed = true
+      out.push(`✓ copied "${ref}" → "${to}" (original untouched)`)
+    }
   }
-  if (value == null) return [`! skipped "${name}" (not in Keychain)`]
-  try {
-    keychain.set(name, value, { account: acct, exec })
-  } catch (err) {
-    return [`! skipped "${name}" (write failed: ${why(err)})`]
-  }
-  return [`✓ trusted "${name}"`]
+  if (!out.length) return { lines: ['no keychain items referenced by the config — nothing to own'], changed: false }
+  return { lines: out, changed }
 }
 
-// every keyring-kind secret the config references (gateway/cursor of all identities),
-// re-saved so /usr/bin/security is on each item's trusted-app list — kills the repeated
-// macOS prompts items made by other tools (or by older node paths) cause
-export const trust = (
-  identities: Record<string, { keychain?: Record<string, string | undefined> }>,
-  { exec = realExec, platform: pf = platform() }: TrustOpts = {},
-): string[] => {
-  if (pf === 'linux') return ['no Keychain on linux — nothing to trust']
-  const refs = [...new Set(keyringRefs(identities))]
-  if (!refs.length) return ['no keychain items referenced by the config — nothing to trust']
-  return refs.flatMap((name) => one(name, exec))
-}
-
-export default async (argv: string[], ctx: CommandCtx, opts: TrustOpts = {}): Promise<void> => {
-  if (argv[0] !== 'trust') {
-    ctx.print('usage: barrito keychain trust')
+export default async (argv: string[], ctx: CommandCtx, opts: OwnOpts = {}): Promise<void> => {
+  if (argv[0] !== 'own' && argv[0] !== 'trust') {
+    ctx.print('usage: barrito keychain own')
     return ctx.exit(2)
   }
-  ctx.print('re-saving each item with /usr/bin/security trusted — one prompt per item is expected: click "Always Allow"')
-  trust(ctx.config.identities, opts).forEach(ctx.print)
-  return
+  if (argv[0] === 'trust') ctx.print('trust runs own now — keys are copied into barrito-owned items instead of re-trusting foreign ones')
+  ctx.print('copying each foreign key into a barrito-owned item — macOS will ask once per key; click Allow')
+  const { lines, changed } = own(ctx.config.identities, opts)
+  lines.forEach(ctx.print)
+  if (changed) (opts.save ?? ((config: Config) => cfg.save(config)))(ctx.config)
 }

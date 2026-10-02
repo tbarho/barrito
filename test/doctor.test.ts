@@ -219,7 +219,7 @@ test('missing gateway key fails the identity line', async () => {
   const results = await diagnose(cfg, opts({ keychain: { get: (s: string) => s === 'Vercel AI Gateway Work' ? null : 'secret' } }))
   const line = results.find((r) => r.text.startsWith('work:'))
   assert.equal(line?.level, 'fail')
-  assert.match(line?.text ?? '', /gateway keychain item "Vercel AI Gateway Work" missing/)
+  assert.match(line?.text ?? '', /gateway keychain "Vercel AI Gateway Work" missing/)
 })
 
 test('missing cursor key is a warning, not a failure', async () => {
@@ -229,7 +229,7 @@ test('missing cursor key is a warning, not a failure', async () => {
   const results = await diagnose(cfg, opts({ keychain: { get: (s: string) => s === 'Cursor Work' ? null : 'secret' } }))
   const line = results.find((r) => r.text.startsWith('work:'))
   assert.equal(line?.level, 'warn')
-  assert.match(line?.text ?? '', /cursor keychain item "Cursor Work" missing/)
+  assert.match(line?.text ?? '', /cursor keychain "Cursor Work" missing/)
 })
 
 test('claude not logged in fails', async () => {
@@ -466,15 +466,15 @@ test('a keyring get that throws (no keyring) is a warning, not a crash', async (
 })
 
 // the macOS ACL prompt ("user interaction is not allowed" / user canceled) has its own fix
-test('a keyring get denied by keychain access-control warns with the trust fix', async () => {
+test('a keyring get denied by keychain access-control warns with the own fix', async () => {
   shims()
   cacheCatalog()
   const denied = { get: () => { throw new Error('security: SecKeychainItemCopyAttributesAndData: User interaction is not allowed.') } }
   const results = await diagnose(config(), opts({ keychain: denied }))
   const line = results.find((r) => r.text.startsWith('work:'))
   assert.equal(line?.level, 'warn')
-  assert.match(line?.text ?? '', /gateway keychain item "Vercel AI Gateway Work" prompts for keychain access — barrito keychain trust/)
-  assert.match(line?.text ?? '', /cursor keychain item "Cursor Work" prompts for keychain access — barrito keychain trust/)
+  assert.match(line?.text ?? '', /gateway keychain "Vercel AI Gateway Work" prompts for keychain access — barrito keychain own/)
+  assert.match(line?.text ?? '', /cursor keychain "Cursor Work" prompts for keychain access — barrito keychain own/)
   assert.ok(!line?.text.includes('unreadable — no keyring'))
 })
 

@@ -201,9 +201,11 @@ A keychain slot in config.toml takes three ref forms:
 
 | Ref | Reads from |
 | --- | --- |
-| `Vercel AI Gateway` (plain name) | The platform keyring — a Keychain item on macOS, `secret-tool` on Linux. |
+| `barrito: gateway work` (plain name) | The platform keyring — a Keychain item on macOS, `secret-tool` on Linux. |
 | `env:AI_GATEWAY_API_KEY` | The environment variable, trimmed. |
 | `file:~/.config/barrito/gateway.key` | The file, trimmed. |
+
+On macOS barrito owns its Keychain items: names `barrito: <slot> <identity>`, account `barrito`, created with `-T /usr/bin/security` — creation never asks, and reads through `/usr/bin/security` never prompt again. When `init` finds the planned config pointing at an item made by another tool (e.g. `Vercel AI Gateway` from the Vercel CLI), it copies it once into the barrito-owned item — one macOS prompt per key — and repoints the config; the original is never modified or deleted, so the tool that made it keeps working. `barrito keychain own` does the same standalone for an existing config, and `uninstall --restore` removes the copies. A re-run of `init` where the config already points at `barrito: …` items plans zero keychain actions.
 
 `file:` is guarded both ways. barrito writes secrets only at `0600`, atomically, and refuses to write through a symlink or into a group/world-writable directory without the sticky bit. Reads refuse a symlink whose target isn't owned by you or isn't private. `env:` refs are read-only — `set` throws. `doctor` reports each ref by kind, so a keyring name on a box with no keyring is a visible ✗, not a silent failure.
 
@@ -243,8 +245,8 @@ claude_config_dir = "~/.claude"
 fallback = ["zai/glm-5.3", "deepseek/deepseek-v4.1-flash"]
 match.remotes = ["github.com/acme/*"]
 match.paths = ["~/Code/acme/**"]
-keychain.gateway = "Vercel AI Gateway Work"
-keychain.cursor = "Cursor Work"
+keychain.gateway = "barrito: gateway work"
+keychain.cursor = "barrito: cursor work"
 
 [identities.personal]
 claude_config_dir = "~/.claude-personal"
@@ -252,8 +254,8 @@ share_from = "~/.claude"      # symlink rules/ skills/ agents/ CLAUDE.md
 fallback = ["zai/glm-5.3", "deepseek/deepseek-v4.1-flash"]
 match.remotes = ["github.com/you/*"]
 match.paths = ["~/Code/you/**"]
-keychain.gateway = "Vercel AI Gateway"
-keychain.cursor = "Cursor"
+keychain.gateway = "barrito: gateway personal"
+keychain.cursor = "barrito: cursor personal"
 
 [graft]
 roots = ["~/Code", "~/emdash/repositories"]

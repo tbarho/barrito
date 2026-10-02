@@ -126,6 +126,7 @@ test('--dry-run --yes: prints the plan, writes nothing, exits 0', async () => {
   assert.match(plan, /boot out and remove the legacy claude-router/)
   assert.match(plan, /replace legacy shims/)
   assert.match(plan, /remove 3 \.envrc symlink/)
+  assert.match(plan, /\+ copy 2 keychain keys into barrito-owned items \(one macOS prompt each\)/)
   assert.match(text, /work and personal have no match globs yet — every directory resolves to the default identity/)
   assert.match(plan, /retired: openai\/gpt-5\.6-luna \(dropped\)/)
   assert.match(plan, /seed \[models\]/)
@@ -143,6 +144,12 @@ test('--yes: full write, then a second --yes run plans zero actions', async () =
   const config = load()
   assert.deepEqual(Object.keys(config.identities), ['work', 'personal'])
   assert.equal(config.identities.personal!.claude_config_dir, path.join(home, '.claude-personal'))
+  // the foreign gateway items were adopted: slots point at barrito-owned copies
+  assert.equal(config.identities.work!.keychain.gateway, 'barrito: gateway work')
+  assert.equal(config.identities.personal!.keychain.gateway, 'barrito: gateway personal')
+  assert.equal(f.items['barrito: gateway work'], 'gw-work-key')
+  assert.equal(f.items['barrito: gateway personal'], 'gw-personal-key')
+  assert.equal(f.items['Vercel AI Gateway Work'], 'gw-work-key', 'the original item is never touched')
   assert.ok(config.models.include.includes('zai/*'))
   assert.ok(config.models.pin.includes('openai/gpt-6-astra'))
   assert.deepEqual(config.transforms, { rtk: true, caveman: 'lite' })
@@ -200,6 +207,7 @@ test('--yes hides secrets from stdout', async () => {
   const text = await stdout(() => run(['--yes'], f))
   assert.ok(!text.includes('fake-cursor'))
   assert.ok(!text.includes('gw-personal-key'))
+  assert.ok(!text.includes('gw-work-key'), 'the adoption copy line never carries the value')
 })
 
 test('default io.keychain has set — the cursor-keys step writes through it (typeof only, never invoked)', () => {
@@ -279,6 +287,40 @@ test('uninstall: strips only barrito-owned pieces, unwraps statusline, --restore
   assert.equal(fs.existsSync(path.join(home, '.claude', 'commands', 'barrito.md')), false)
   // foreign keys kept
   assert.deepEqual(work.permissions, { allow: ['Bash(git:*)'] })
+
+  // barrito-owned keychain copies removed — delete-generic-password, one per owned slot
+  const removes = calls.filter((c) => c.bin === '/usr/bin/security' && c.args[0] === 'delete-generic-password')
+  assert.deepEqual(removes.map((c) => c.args[c.args.indexOf('-s') + 1]).sort(),
+    ['barrito: gateway personal', 'barrito: gateway work'])
+})
+
+test('uninstall --restore: config.toml backed up by init comes back, pointing at the pre-adoption names', async () => {
+  const f = fakes()
+  // a pre-barrito config pointing at foreign items — exactly what adoption rewrites
+  save({
+    port: 4141,
+    default: 'work',
+    identities: {
+      work: {
+        claude_config_dir: path.join(home, '.claude'),
+        keychain: { gateway: 'Vercel AI Gateway Work', cursor: 'Cursor Work' },
+      },
+    },
+  })
+  await run(['--yes'], f)
+  assert.equal(load().identities.work!.keychain.gateway, 'barrito: gateway work')
+
+  const calls: Array<{ bin: string; args: string[] }> = []
+  const io = { exec: (bin: string, args: string[]): string => { calls.push({ bin, args }); return '' }, shell: '/bin/zsh' }
+  const out: string[] = []
+  await uninstall(['--restore', '--yes'], {
+    config: load(),
+    print: (s: string) => { out.push(s) },
+    exit: fakeExit(out),
+    io,
+  })
+  assert.equal(load().identities.work!.keychain.gateway, 'Vercel AI Gateway Work')
+  assert.ok(calls.some((c) => c.bin === '/usr/bin/security' && c.args.includes('barrito: gateway work') && c.args[0] === 'delete-generic-password'))
 })
 
 // ── linux + the shell rc PATH line ────────────────────────────────────────────
@@ -390,9 +432,12 @@ test('interactive: a third identity via scripted prompts lands in config with it
     [/write it\?/, true],
   ])
   const plan = await run([], f, { ...f.io, prompts })
-  // personal's .envrc key moves into "Cursor"; side's already-populated "Cursor SIDE" does not
-  assert.match(plan.join('\n'), /move CURSOR_API_KEY into Keychain \("Cursor"\)/)
-  assert.ok(!plan.join('\n').includes('Cursor SIDE'), 'no cursor-keys move planned for the already-populated custom item')
+  // side's already-populated "Cursor SIDE" is adopted (copied, never moved into); the
+  // personal .envrc key moves into a barrito-owned item, created owned from birth
+  assert.match(plan.join('\n'), /\+ copy 3 keychain keys into barrito-owned items \(one macOS prompt each\)/)
+  assert.match(plan.join('\n'), /move CURSOR_API_KEY into Keychain \("barrito: cursor personal"\)/)
+  assert.ok(!plan.join('\n').includes('move CURSOR_API_KEY into Keychain ("barrito: cursor side")'),
+    'no cursor-keys move planned for the already-populated custom item (it is adopted, not overwritten)')
 
   const config = load()
   assert.deepEqual(Object.keys(config.identities), ['work', 'personal', 'side'])
@@ -406,11 +451,14 @@ test('interactive: a third identity via scripted prompts lands in config with it
   assert.deepEqual(side.match.remotes, ['github.com/side/*'])
   assert.deepEqual(side.match.paths, [path.join(home, 'Code', 'acme', '**')])
   assert.equal(side.keychain.gateway, 'Vercel AI Gateway SIDE')
-  assert.equal(side.keychain.cursor, 'Cursor SIDE')
+  assert.equal(side.keychain.cursor, 'barrito: cursor side', 'the existing foreign cursor item was adopted')
   assert.deepEqual(side.fallback, ['zai/glm-5.3', 'deepseek/deepseek-v4.1-flash'])
   assert.ok(fs.existsSync(path.join(home, '.claude-side')), 'side got its own claude dir')
-  assert.equal(f.items['Cursor'], 'fake-cursor-personal-99aa88')
-  assert.equal(f.items['Cursor SIDE'], 'already-in-keychain')
+  assert.equal(f.items['barrito: cursor personal'], 'fake-cursor-personal-99aa88')
+  assert.equal(f.items['barrito: cursor side'], 'already-in-keychain', 'the owned copy holds the adopted value')
+  assert.equal(f.items['Cursor SIDE'], 'already-in-keychain', 'the original item is never touched')
+  assert.equal(config.identities.work?.keychain.gateway, 'barrito: gateway work')
+  assert.equal(config.identities.personal?.keychain.gateway, 'barrito: gateway personal')
 
   // detect lists every configured dir — config-driven, not a hardcoded pair
   const found = detect({ home, exec: f.exec, fs, path: `${home}/bin:/usr/bin:/bin`, keychain: f.keychain, shell: '/bin/zsh' })
@@ -419,7 +467,7 @@ test('interactive: a third identity via scripted prompts lands in config with it
     [path.join(home, '.claude'), path.join(home, '.claude-personal'), path.join(home, '.claude-side')].sort(),
   )
   assert.equal(found.claudeDirs.find((d) => d.dir === path.join(home, '.claude'))?.loggedIn, true)
-  assert.equal(found.keychain['Cursor SIDE'], true, 'detect probes the config identities\' keyring names')
+  assert.equal(found.keychain['barrito: cursor side'], true, 'detect probes the config identities\' keyring names')
   // the login step never spawns claude — it prints the command for the user to run elsewhere
   assert.ok(!f.calls.some((c) => c.spawn), 'nothing is ever spawned')
 

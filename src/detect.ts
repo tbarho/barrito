@@ -2,7 +2,7 @@ import fsx from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { builtins, realBin } from './harnesses.ts'
-import { get as keychainGet, kind as keychainKind } from './keychain/index.ts'
+import { get as keychainGet, has as keychainHas, kind as keychainKind } from './keychain/index.ts'
 import * as service from './service/index.ts'
 import { unit } from './service/systemd.ts'
 import { platform } from './paths.ts'
@@ -231,11 +231,12 @@ export const keyringRefs = (identities: Record<string, { keychain?: Record<strin
   Object.values(identities).flatMap((identity) => Object.values(identity.keychain ?? {}))
     .filter((ref): ref is string => typeof ref === 'string' && ref.length > 0 && keychainKind(ref) === 'keyring')
 
-// a linux keyring get throws when secret-tool/D-Bus is missing — that reads as "no key", never a crash
+// probe with has() where the adapter offers it (macOS: attributes only, no -w — probing
+// an item another tool made never prompts); a get that throws reads as "no key", never a crash
 export const probe = (refs: string[], keychain: Keychain | ((service: string) => string | null)): Record<string, boolean> => {
   const kc = typeof keychain === 'function' ? { get: keychain } : keychain
   return [...new Set(refs)].reduce<Record<string, boolean>>((memo, name) => {
-    try { memo[name] = kc.get(name) != null } catch { memo[name] = false }
+    try { memo[name] = kc.has ? kc.has(name) : kc.get(name) != null } catch { memo[name] = false }
     return memo
   }, {})
 }
@@ -253,7 +254,7 @@ export const detect = ({
   exec = defaultExec,
   fs = fsx,
   path: pathEnv = process.env.PATH,
-  keychain = { get: keychainGet },
+  keychain = { get: keychainGet, has: keychainHas },
   creds: readCreds = creds,
   shell = process.env.SHELL,
 }: DetectOpts = {} as DetectOpts): Detected => {

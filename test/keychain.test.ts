@@ -5,7 +5,7 @@ import * as real from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { ExecFileSyncOptions } from 'node:child_process'
-import { get, set, kind } from '../src/keychain/index.ts'
+import { get, set, has, del, kind, ownName, owned } from '../src/keychain/index.ts'
 import type { SecretFs } from '../src/keychain/index.ts'
 import * as linux from '../src/keychain/linux.ts'
 import * as macos from '../src/keychain/macos.ts'
@@ -119,25 +119,65 @@ test('set: value never rides argv — only stdin (trusted-app flags are argv)', 
   assert.equal(calls[0]?.args.filter((a) => a === '-T').length, 1) // -T may repeat, value never does
 })
 
-// ── macOS account (attributes read for trust re-saves) ────────────────────────
+// ── macOS has (attributes-only probe) and del ────────────────────────────────
 
-const attrs = (acct: string): string =>
-  `keychain: "/Users/x/Library/Keychains/login.keychain-db"\nversion: 512\nclass: "genp"\nattributes: {\n    "acct"<blob>="${acct}"\n    "svce"<blob>="Vercel AI Gateway"\n    "crtr"<uint32>="AAR"\n}`
-
-test('account: reads "acct" from the find-generic-password attributes dump, no -w', () => {
-  const { calls, exec } = recorder(() => attrs('vercel-cli'))
-  assert.equal(macos.account('Vercel AI Gateway', { exec }), 'vercel-cli')
+test('has: attributes read only — no -w, so probing never triggers an access prompt', () => {
+  const { calls, exec } = recorder(() => 'attributes: {\n    "svce"<blob>="x"\n}')
+  assert.equal(macos.has('Vercel AI Gateway', { exec }), true)
+  assert.equal(calls.length, 1)
   assert.equal(calls[0]?.bin, '/usr/bin/security')
   assert.deepEqual(calls[0]?.args, ['find-generic-password', '-s', 'Vercel AI Gateway'])
+  assert.equal(calls[0]?.args.includes('-w'), false)
 })
 
-test('account: not found → null, other errors surface', () => {
+test('has: not found → false, other errors surface', () => {
   const miss = recorder(notFound)
-  assert.equal(macos.account('Missing', { exec: miss.exec }), null)
+  assert.equal(macos.has('Missing', { exec: miss.exec }), false)
   const broken = recorder(() => {
     throw Object.assign(new Error('could not be decoded'), { status: 45 })
   })
-  assert.throws(() => macos.account('Broken', { exec: broken.exec }), /could not be decoded/)
+  assert.throws(() => macos.has('Broken', { exec: broken.exec }), /could not be decoded/)
+})
+
+test('del: delete-generic-password by service, miss → false', () => {
+  const { calls, exec } = recorder(() => '')
+  assert.equal(macos.del('barrito: gateway work', { exec }), true)
+  assert.deepEqual(calls[0]?.args, ['delete-generic-password', '-s', 'barrito: gateway work'])
+  const miss = recorder(notFound)
+  assert.equal(macos.del('barrito: gateway work', { exec: miss.exec }), false)
+})
+
+// ── ownership naming + index-level has/del ───────────────────────────────────
+
+test('ownName/owned: "barrito: <slot> <identity>" and its prefix check', () => {
+  assert.equal(ownName('gateway', 'asf'), 'barrito: gateway asf')
+  assert.equal(ownName('cursor', 'personal'), 'barrito: cursor personal')
+  assert.equal(owned('barrito: gateway asf'), true)
+  assert.equal(owned('Vercel AI Gateway'), false)
+  assert.equal(owned('env:barrito: x'), false)
+  assert.equal(owned('file:~/barrito: x'), false)
+})
+
+test('index has: keyring goes to the adapter, env:/file: fall back to get', () => {
+  withEnv({ BARRITO_PLATFORM: 'darwin' }, () => {
+    const ring = recorder(() => 'attributes: {}')
+    assert.equal(has('Vercel AI Gateway', { exec: ring.exec }), true)
+    assert.deepEqual(ring.calls[0]?.args, ['find-generic-password', '-s', 'Vercel AI Gateway'])
+  })
+  assert.equal(has('env:TOK', { env: { TOK: 'v' } }), true)
+  assert.equal(has('env:NOPE', { env: {} }), false)
+})
+
+test('index del: keyring only — env: is read-only, file: is refused', () => {
+  withEnv({ BARRITO_PLATFORM: 'darwin' }, () => {
+    const { exec } = recorder(() => '')
+    assert.equal(del('barrito: gateway work', { exec }), true)
+    assert.throws(() => del('env:X', { env: {} }), /barrito: env: secrets are read-only/)
+    assert.throws(() => del('file:/tmp/k', { fs: fakeFs() }), /barrito: not a keyring item/)
+  })
+  withEnv({ BARRITO_PLATFORM: 'linux' }, () => {
+    assert.throws(() => del('barrito: gateway work', { exec: () => '' }), /barrito: keyring deletion is unsupported/)
+  })
 })
 
 // ── env: refs ────────────────────────────────────────────────────────────────

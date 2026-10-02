@@ -156,7 +156,7 @@ export const io: Io = {
   // write "Bad request." to stderr, and init reports findings itself
   exec: (bin, args, opts) => execFileSync(bin, args, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], ...opts }) as string,
   spawn: (bin, args, { env } = {}) => spawnSync(bin, args, { stdio: 'inherit', env: { ...process.env, ...env } }),
-  keychain: { get: keychain.get, set: keychain.set },
+  keychain: { get: keychain.get, has: keychain.has, set: keychain.set },
   account: (dir) => account(dir, { fs, home: home() }),
   node: process.execPath,
   pathEnv: process.env.PATH,
@@ -180,7 +180,10 @@ const catalog = async (config: Config, deps: Io, dry: boolean | undefined): Prom
   const hit = cached({ statePath: paths.state })
   if (hit) return hit
   const gateway = Object.values(config.identities ?? {})[0]?.keychain?.gateway
-  const key = gateway != null ? deps.keychain.get(gateway) ?? undefined : undefined
+  // reading a foreign Keychain item would prompt on macOS — models sync reads the
+  // barrito-owned copy after adoption, so skip the key for refs barrito doesn't own
+  const readable = gateway != null && !(platform() === 'darwin' && keychain.kind(gateway) === 'keyring' && !keychain.owned(gateway))
+  const key = readable ? deps.keychain.get(gateway!) ?? undefined : undefined
   const statePath = paths.state
   return dry ? refresh({ key, statePath, fetch: deps.fetch, fs: voidFs }) : refresh({ key, statePath })
 }
@@ -361,6 +364,16 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
   const have = (ref: string): boolean => {
     try { return deps.keychain.get(ref) != null } catch { return false }
   }
+  // probe the planned refs up front — has() reads attributes only, so a foreign item is
+  // never prompted here; the one value read per adopted item happens at apply time
+  const probed = probe(keyringRefs(identities), deps.keychain)
+  const keychainState = { ...detected.keychain, ...probed }
+  // a foreign item that exists is adopted: copied into "barrito: <slot> <id>" by the
+  // keychain-own action, with the config slot rewritten to point at the copy
+  const adoptTo = (slot: 'gateway' | 'cursor', ref: string, id: string): string | null =>
+    pf === 'darwin' && keychain.kind(ref) === 'keyring' && !keychain.owned(ref) && probed[ref] === true
+      ? keychain.ownName(slot, id)
+      : null
   for (const [id, identity] of Object.entries(identities)) {
     p.log.step(`Identity · ${id}${id === defaultId ? ' (default)' : ''}`)
     p.log.message(`match    ${identity.match.remotes.join('  ')}  ${identity.match.paths.map(short).join('  ')}`)
@@ -384,11 +397,19 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
       }
     }
     const gateway = identity.keychain.gateway ?? ''
-    p.log.message(`gateway  ${show(gateway)}  ${have(gateway) ? '✓' : '✗'}`)
-    if (!have(gateway) && gateway.startsWith('env:')) p.log.message(`  export ${gateway.slice(4)}=<vercel ai gateway key>`)
+    const gatewayOwn = adoptTo('gateway', gateway, id)
+    if (gatewayOwn) p.log.message(`gateway  keychain "${gatewayOwn}" ✓ (copied from "${gateway}")`)
+    else {
+      p.log.message(`gateway  ${show(gateway)}  ${have(gateway) ? '✓' : '✗'}`)
+      if (!have(gateway) && gateway.startsWith('env:')) p.log.message(`  export ${gateway.slice(4)}=<vercel ai gateway key>`)
+    }
     const cursor = identity.keychain.cursor ?? ''
-    p.log.message(`cursor   ${show(cursor)}  ${have(cursor) ? '✓' : '✗'}`)
-    if (!have(cursor) && cursor.startsWith('env:')) p.log.message(`  export ${cursor.slice(4)}=<cursor key>`)
+    const cursorOwn = adoptTo('cursor', cursor, id)
+    if (cursorOwn) p.log.message(`cursor   keychain "${cursorOwn}" ✓ (copied from "${cursor}")`)
+    else {
+      p.log.message(`cursor   ${show(cursor)}  ${have(cursor) ? '✓' : '✗'}`)
+      if (!have(cursor) && cursor.startsWith('env:')) p.log.message(`  export ${cursor.slice(4)}=<cursor key>`)
+    }
     if (identity.share_from && id === 'personal') {
       share = await ask(`share rules/skills/agents from ${short(identity.share_from)}?`)
       if (share) p.log.message(`share rules/skills/agents from ${short(identity.share_from)}`)
@@ -443,9 +464,9 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
   } catch {
     p.log.warn('gateway catalog unavailable — run `barrito models sync` once the router is up')
   }
-  // detect read the config before the wizard's identities existed — probe their keyring refs
-  // too, so a custom cursor item that already holds a key never re-plans the cursor-keys move
-  const keychainState = { ...detected.keychain, ...probe(keyringRefs(identities), deps.keychain) }
+  // detect read the config before the wizard's identities existed — the probe above
+  // covers their keyring refs, so a custom cursor item that already holds a key never
+  // re-plans the cursor-keys move
   // a config without [transforms] must reach plan() transforms-less — load() injects the
   // defaults, which would hide a first-time [transforms] write from canon's diff
   const carried: Partial<Config> = txStep ? { ...current, transforms: undefined } : current
@@ -458,6 +479,9 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
   if (dry) {
     p.outro(pc.dim('(dry run — nothing written)'))
     return
+  }
+  if (actions.some((a) => a.kind === 'keychain-own')) {
+    p.log.message('macOS will ask once per key; click Allow — each foreign item is read exactly once and never modified')
   }
   const go = await ask('write it?')
   if (!go) {
@@ -492,10 +516,6 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
     actions.some((a) => a.kind === 'path-rc') && 'PATH line',
     actions.some((a) => a.kind === 'settings') && 'statusline',
   ].filter(Boolean).join(', ')
-  // items that already existed before this run (created by other tools or older node
-  // paths) carry no /usr/bin/security trust — offer the one command that fixes the prompts
-  const adopted = pf === 'darwin' ? keyringRefs(identities).filter((name) => detected.keychain[name] === true) : []
-  if (adopted.length) p.log.message(`existing keychain items in use — if macOS prompts for them repeatedly, run \`barrito keychain trust\` (items init wrote are already trusted)`)
   p.outro(`${wrote}.
 Restart emdash and Conductor once so they pick up PATH.
 Next: barrito doctor`)
