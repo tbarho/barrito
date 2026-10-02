@@ -1,5 +1,5 @@
 const motion = matchMedia('(prefers-reduced-motion: reduce)');
-const canvas = document.querySelector('.fx-foil');
+let canvas = document.querySelector('.fx-foil');
 const hero = canvas?.closest('.hero');
 const stats = { mode: 'fallback', frames: 0, running: false, cpu: [], gpu: [] };
 window.__fx = { hero: stats };
@@ -250,7 +250,21 @@ async function start() {
   resize();
 }
 
-start().catch(() => {
-  stats.mode = 'fallback';
-  delete canvas?.dataset.ready;
-});
+async function fallback() {
+  stats.backend = 'webgl';
+  const fresh = canvas.cloneNode(false);
+  delete fresh.dataset.ready;
+  canvas.replaceWith(fresh);
+  canvas = fresh;
+  try { await start(); } catch { stats.mode = 'fallback'; }
+}
+
+async function init() {
+  if (!canvas) return;
+  try {
+    if (!navigator.gpu) return fallback();
+    const { flare } = await import('./flare.js');
+    await flare(canvas, motion, stats, fallback);
+  } catch { await fallback(); }
+}
+init();
