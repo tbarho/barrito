@@ -16,6 +16,7 @@ import { cached, refresh } from '../catalog.ts'
 import { scan, runGit } from '../graft.ts'
 import { account } from '../claude.ts'
 import { detect, keyringRefs, probe } from '../detect.ts'
+import type { ClaudeAccount } from '../detect.ts'
 import { create as createBackup } from '../backup.ts'
 import { plan, apply, histories, short } from '../migrate.ts'
 import type { Action, GraftRun, ServiceIo, WriteKeychain } from '../migrate.ts'
@@ -134,6 +135,7 @@ export interface Io {
   exec: Exec
   spawn: (bin: string, args: string[], opts?: { env?: Record<string, string> }) => unknown
   keychain: WriteKeychain
+  account: (dir: string) => ClaudeAccount
   node: string
   pathEnv: string | undefined
   bin: string
@@ -150,9 +152,12 @@ export interface Io {
 
 // the real wiring — tests override via ctx.io with the same shape and never touch the Keychain
 export const io: Io = {
-  exec: (bin, args, opts) => execFileSync(bin, args, { encoding: 'utf8', ...opts }) as string,
+  // child stdio is always piped: probes like `launchctl print` of a missing service
+  // write "Bad request." to stderr, and init reports findings itself
+  exec: (bin, args, opts) => execFileSync(bin, args, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], ...opts }) as string,
   spawn: (bin, args, { env } = {}) => spawnSync(bin, args, { stdio: 'inherit', env: { ...process.env, ...env } }),
   keychain: { get: keychain.get, set: keychain.set },
+  account: (dir) => account(dir, { fs, home: home() }),
   node: process.execPath,
   pathEnv: process.env.PATH,
   bin: fs.realpathSync(process.argv[1] ?? 'barrito') as string,
@@ -225,7 +230,6 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
 
   let fallback: 'cheap' | 'claude' | 'stop' = 'cheap'
   if (!yes) {
-    p.log.step('When Max runs out')
     fallback = await ui.select('When Max runs out', {
       initialValue: 'cheap',
       options: [
@@ -361,10 +365,23 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
     p.log.step(`Identity · ${id}${id === defaultId ? ' (default)' : ''}`)
     p.log.message(`match    ${identity.match.remotes.join('  ')}  ${identity.match.paths.map(short).join('  ')}`)
     // a just-added identity is not in the config yet, so check its dir directly
-    const login = detected.claudeDirs.find((d) => d.dir === identity.claude_config_dir) ?? account(identity.claude_config_dir, { fs, home: home() })
+    const login = detected.claudeDirs.find((d) => d.dir === identity.claude_config_dir) ?? deps.account(identity.claude_config_dir)
     p.log.message(`claude   ${short(identity.claude_config_dir)}  ${login.loggedIn ? `✓ logged in (${login.email})` : '✗ not logged in'}`)
-    if (!login.loggedIn && !dry && await ask(`login now? (CLAUDE_CONFIG_DIR=${short(identity.claude_config_dir)} claude /login)`, { value: false })) {
-      deps.spawn('claude', ['/login'], { env: { CLAUDE_CONFIG_DIR: identity.claude_config_dir } })
+    // never spawn `claude` for the login: its first-run onboarding in a fresh config dir
+    // takes over the terminal (theme, login, trust) and asks twice — the user runs it
+    if (!login.loggedIn) {
+      p.log.message(`  log in from another terminal:  CLAUDE_CONFIG_DIR=${short(identity.claude_config_dir)} claude  →  /login`)
+      p.log.message('  tip: open the sign-in URL in a private browser window when the browser is signed into a different account')
+      if (!yes && !dry) {
+        let email: string | null = null
+        for (let attempt = 0; attempt < 3 && email == null; attempt++) {
+          if (!await ask('logged in? (re-checks)', { value: false })) break
+          const again = deps.account(identity.claude_config_dir)
+          if (again.loggedIn) email = again.email
+          else if (attempt < 2) p.log.message('  still not logged in')
+        }
+        p.log.message(email ? `  ✓ logged in (${email})` : '  continuing — barrito doctor will flag the login')
+      }
     }
     const gateway = identity.keychain.gateway ?? ''
     p.log.message(`gateway  ${show(gateway)}  ${have(gateway) ? '✓' : '✗'}`)
@@ -475,6 +492,10 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
     actions.some((a) => a.kind === 'path-rc') && 'PATH line',
     actions.some((a) => a.kind === 'settings') && 'statusline',
   ].filter(Boolean).join(', ')
+  // items that already existed before this run (created by other tools or older node
+  // paths) carry no /usr/bin/security trust — offer the one command that fixes the prompts
+  const adopted = pf === 'darwin' ? keyringRefs(identities).filter((name) => detected.keychain[name] === true) : []
+  if (adopted.length) p.log.message(`existing keychain items in use — if macOS prompts for them repeatedly, run \`barrito keychain trust\` (items init wrote are already trusted)`)
   p.outro(`${wrote}.
 Restart emdash and Conductor once so they pick up PATH.
 Next: barrito doctor`)

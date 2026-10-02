@@ -95,10 +95,10 @@ test('get: empty value → null', () => {
   assert.equal(macos.get('Empty', { exec }), null)
 })
 
-test('set: secret goes via stdin, never argv', () => {
+test('set: secret goes via stdin, never argv; /usr/bin/security is on the trusted-app list', () => {
   const { calls, exec } = recorder()
   macos.set('Vercel AI Gateway Work', 'sekret', { exec })
-  assert.deepEqual(calls[0]?.args, ['add-generic-password', '-U', '-s', 'Vercel AI Gateway Work', '-a', 'barrito', '-w'])
+  assert.deepEqual(calls[0]?.args, ['add-generic-password', '-U', '-s', 'Vercel AI Gateway Work', '-a', 'barrito', '-T', '/usr/bin/security', '-w'])
   assert.equal(calls[0]?.opts.input, 'sekret\nsekret\n')
   assert.equal(calls[0]?.opts.encoding, 'utf8')
   assert.equal(calls[0]?.args.includes('sekret'), false)
@@ -107,8 +107,37 @@ test('set: secret goes via stdin, never argv', () => {
 test('set: account override', () => {
   const { calls, exec } = recorder()
   macos.set('Cursor', 'k', { account: 'ty', exec })
-  assert.deepEqual(calls[0]?.args, ['add-generic-password', '-U', '-s', 'Cursor', '-a', 'ty', '-w'])
+  assert.deepEqual(calls[0]?.args, ['add-generic-password', '-U', '-s', 'Cursor', '-a', 'ty', '-T', '/usr/bin/security', '-w'])
   assert.equal(calls[0]?.opts.input, 'k\nk\n')
+})
+
+test('set: value never rides argv — only stdin (trusted-app flags are argv)', () => {
+  const { calls, exec } = recorder()
+  macos.set('Cursor', 'sekret', { account: 'vercel-cli', exec })
+  assert.equal(calls[0]?.args.includes('sekret'), false)
+  assert.equal(calls[0]?.opts.input, 'sekret\nsekret\n')
+  assert.equal(calls[0]?.args.filter((a) => a === '-T').length, 1) // -T may repeat, value never does
+})
+
+// ── macOS account (attributes read for trust re-saves) ────────────────────────
+
+const attrs = (acct: string): string =>
+  `keychain: "/Users/x/Library/Keychains/login.keychain-db"\nversion: 512\nclass: "genp"\nattributes: {\n    "acct"<blob>="${acct}"\n    "svce"<blob>="Vercel AI Gateway"\n    "crtr"<uint32>="AAR"\n}`
+
+test('account: reads "acct" from the find-generic-password attributes dump, no -w', () => {
+  const { calls, exec } = recorder(() => attrs('vercel-cli'))
+  assert.equal(macos.account('Vercel AI Gateway', { exec }), 'vercel-cli')
+  assert.equal(calls[0]?.bin, '/usr/bin/security')
+  assert.deepEqual(calls[0]?.args, ['find-generic-password', '-s', 'Vercel AI Gateway'])
+})
+
+test('account: not found → null, other errors surface', () => {
+  const miss = recorder(notFound)
+  assert.equal(macos.account('Missing', { exec: miss.exec }), null)
+  const broken = recorder(() => {
+    throw Object.assign(new Error('could not be decoded'), { status: 45 })
+  })
+  assert.throws(() => macos.account('Broken', { exec: broken.exec }), /could not be decoded/)
 })
 
 // ── env: refs ────────────────────────────────────────────────────────────────

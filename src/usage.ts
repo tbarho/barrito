@@ -30,6 +30,16 @@ Check PATH order, shims, router/service health, logins, keychain items, model
 catalog freshness, and hosts that need a restart. Exits non-zero on any ✗.
 
   barrito doctor --json`,
+  keychain: `usage: barrito keychain trust
+
+Re-save every keychain item the config references (gateway/cursor of all
+identities) with /usr/bin/security on its trusted-app list — stops the repeated
+macOS password prompts items made by other tools (or by older node paths)
+cause. barrito reads secrets through /usr/bin/security only, so trusting that
+one stable binary survives node upgrades. One prompt per item is expected:
+click "Always Allow". Linux: no-op. Never prints secret values.
+
+  barrito keychain trust`,
   pin: `usage: barrito pin <identity> <max|model>
 
 Identity-wide default for every session. 'max' never falls back — quota errors

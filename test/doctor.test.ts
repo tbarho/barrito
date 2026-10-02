@@ -465,6 +465,19 @@ test('a keyring get that throws (no keyring) is a warning, not a crash', async (
   assert.match(line?.text ?? '', /unreadable — no keyring/)
 })
 
+// the macOS ACL prompt ("user interaction is not allowed" / user canceled) has its own fix
+test('a keyring get denied by keychain access-control warns with the trust fix', async () => {
+  shims()
+  cacheCatalog()
+  const denied = { get: () => { throw new Error('security: SecKeychainItemCopyAttributesAndData: User interaction is not allowed.') } }
+  const results = await diagnose(config(), opts({ keychain: denied }))
+  const line = results.find((r) => r.text.startsWith('work:'))
+  assert.equal(line?.level, 'warn')
+  assert.match(line?.text ?? '', /gateway keychain item "Vercel AI Gateway Work" prompts for keychain access — barrito keychain trust/)
+  assert.match(line?.text ?? '', /cursor keychain item "Cursor Work" prompts for keychain access — barrito keychain trust/)
+  assert.ok(!line?.text.includes('unreadable — no keyring'))
+})
+
 // ── CI (GITHUB_ACTIONS) ───────────────────────────────────────────────────────
 
 test('CI: BARRITO_* env + router health + env: refs; no service/host/identity lines', async () => {

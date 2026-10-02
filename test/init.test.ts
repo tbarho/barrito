@@ -56,6 +56,8 @@ const fakes = () => {
     node: process.execPath,
     pathEnv: `${home}/bin:/usr/bin:/bin`,
     shell: '/bin/zsh',
+    // the injected login re-check — tests answer the "logged in?" confirm against this
+    account: (): { loggedIn: boolean; email: string | null } => ({ loggedIn: false, email: null }),
     spawn: (bin: string, args: string[]): void => { calls.push({ bin, args, spawn: true }) },
   }
   return { calls, items, exec, keychain, io }
@@ -381,10 +383,10 @@ test('interactive: a third identity via scripted prompts lands in config with it
     [/cursor secret/, 'Cursor SIDE'],
     [/Add another identity\?/, false],
     [/default identity\?/, 'side'],
-    [/login now\?/, false],                                  // personal — .claude (work) is logged in
+    [/logged in\? \(re-checks\)/, false],                     // personal — .claude (work) is logged in
     [/share rules\/skills\/agents/, true],                   // personal
     [/copy .* personal project histories/, true],            // personal
-    [/login now\?/, false],                                  // side — its dir is brand new
+    [/logged in\? \(re-checks\)/, false],                     // side — its dir is brand new
     [/write it\?/, true],
   ])
   const plan = await run([], f, { ...f.io, prompts })
@@ -418,6 +420,8 @@ test('interactive: a third identity via scripted prompts lands in config with it
   )
   assert.equal(found.claudeDirs.find((d) => d.dir === path.join(home, '.claude'))?.loggedIn, true)
   assert.equal(found.keychain['Cursor SIDE'], true, 'detect probes the config identities\' keyring names')
+  // the login step never spawns claude — it prints the command for the user to run elsewhere
+  assert.ok(!f.calls.some((c) => c.spawn), 'nothing is ever spawned')
 
   // re-run with the existing 3-identity config plans zero writes — and zero cursor-keys moves
   const f2 = fakes()
@@ -428,6 +432,89 @@ test('interactive: a third identity via scripted prompts lands in config with it
   })
   assert.match(second, /nothing to write/)
   assert.ok(!replan.join('\n').includes('move CURSOR_API_KEY'), 're-plan has zero cursor-keys actions')
+})
+
+// ── the login step ─────────────────────────────────────────────────────────────
+
+test('login step: --yes prints the command, never spawns claude', async () => {
+  const f = fakes()
+  const text = await stdout(() => run(['--yes'], f))
+  // personal is not logged in in the fixture: init points at the command instead of taking over
+  assert.match(text, /CLAUDE_CONFIG_DIR=~\/\.claude-personal claude/)
+  assert.match(text, /\/login/)
+  assert.match(text, /private browser window/)
+  assert.ok(!f.calls.some((c) => c.spawn && c.bin === 'claude'), 'claude is never spawned')
+})
+
+test('login step: "logged in? (re-checks)" re-runs the injected account check, up to 3 times', async () => {
+  const f = fakes()
+  const checked: string[] = []
+  f.io.account = (dir: string): { loggedIn: boolean; email: string | null } => {
+    checked.push(dir)
+    // the first re-check misses, the second lands — proving init re-checks rather than trusting the confirm
+    return { loggedIn: checked.length > 1, email: 'me@x.test' }
+  }
+  const prompts = script([
+    [/back up .* and replace\?/, true],
+    [/When Max runs out/, 'cheap'],
+    [/Compress tool output with rtk\?/, true],
+    [/How terse should replies be\? \(caveman\)/, 'lite'],
+    [/remotes glob/, 'github.com/work/*'],
+    [/paths glob/, '~/Code/work/**'],
+    [/remotes glob/, 'github.com/you/*'],
+    [/paths glob/, '~/Code/you/**'],
+    [/Add another identity\?/, false],
+    [/default identity\?/, 'work'],
+    [/logged in\? \(re-checks\)/, true],
+    [/logged in\? \(re-checks\)/, true],
+    [/share rules\/skills\/agents/, true],
+    [/copy .* personal project histories/, true],
+    [/write it\?/, true],
+  ])
+  const text = await stdout(async () => { await run([], f, { ...f.io, prompts }) })
+  assert.match(text, /CLAUDE_CONFIG_DIR=~\/\.claude-personal claude/)
+  assert.match(text, /still not logged in/)
+  assert.match(text, /✓ logged in \(me@x\.test\)/)
+  assert.ok(!f.calls.some((c) => c.spawn && c.bin === 'claude'), 'claude is never spawned')
+  // "When Max runs out" is the select's message alone — the old p.log.step duplicate is gone
+  // (the select itself is the scripted prompt, which matched the message exactly once)
+  assert.ok(!text.includes('When Max runs out'), 'no step heading printed before the select')
+})
+
+test('login step: three failed re-checks continue with the doctor note', async () => {
+  const f = fakes()
+  const prompts = script([
+    [/back up .* and replace\?/, true],
+    [/When Max runs out/, 'cheap'],
+    [/Compress tool output with rtk\?/, true],
+    [/How terse should replies be\? \(caveman\)/, 'lite'],
+    [/remotes glob/, 'github.com/work/*'],
+    [/paths glob/, '~/Code/work/**'],
+    [/remotes glob/, 'github.com/you/*'],
+    [/paths glob/, '~/Code/you/**'],
+    [/Add another identity\?/, false],
+    [/default identity\?/, 'work'],
+    [/logged in\? \(re-checks\)/, true],
+    [/logged in\? \(re-checks\)/, true],
+    [/logged in\? \(re-checks\)/, true],
+    [/share rules\/skills\/agents/, true],
+    [/copy .* personal project histories/, true],
+    [/write it\?/, true],
+  ])
+  const text = await stdout(async () => { await run([], f, { ...f.io, prompts }) })
+  assert.match(text, /continuing — barrito doctor will flag the login/)
+})
+
+test('io.exec pipes child stdio — the launchctl probe never leaks "Bad request." to the terminal', () => {
+  const chunks: string[] = []
+  const write = process.stderr.write.bind(process.stderr)
+  process.stderr.write = ((s: unknown) => { chunks.push(String(s)); return true }) as typeof process.stderr.write
+  try {
+    assert.equal(io.exec('/bin/sh', ['-c', 'echo chatter >&2; echo out']), 'out\n')
+  } finally {
+    process.stderr.write = write
+  }
+  assert.equal(chunks.join(''), '', 'child stderr was inherited')
 })
 
 // ── token savers (transforms) step ───────────────────────────────────────────

@@ -85,7 +85,7 @@ Dispatch by `kind`: `env:VAR` reads the environment (read-only — `set` throws)
 
 `file:` guards — `set` writes only at 0600 (`O_EXCL` random temp name, fsync, atomic rename) and refuses a symlink destination or a group/world-writable parent dir without the sticky bit; `get` refuses to read through a symlink whose target isn't owned by the current uid or isn't private (group/world bits set).
 
-- `macos.ts`: `/usr/bin/security` (get: `find-generic-password -s <name> -w`, exit 44 = miss; set: `add-generic-password -U` with the secret on **stdin**, never argv).
+- `macos.ts`: `/usr/bin/security` (get: `find-generic-password -s <name> -w`, exit 44 = miss; set: `add-generic-password -U -T /usr/bin/security` with the secret on **stdin**, never argv — the stable `security` binary goes on the item's trusted-app list; `account(name)` reads the item's `"acct"` from the attributes dump, for `barrito keychain trust` re-saves).
 - `linux.ts`: `secret-tool` (get: exit 1 = miss; no binary / no D-Bus secrets service → actionable error naming `env:`/`file:`; set also via stdin). `available({ exec })` probes whether a keyring answers — `init` and `doctor` use it to pick ref forms.
 
 ## `src/service/index.ts` (owner: D)

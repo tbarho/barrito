@@ -110,9 +110,14 @@ const loggedIn = (dir: string): boolean => account(dir).loggedIn
 // keyring names read as "keychain item"; env:/file: refs print as themselves
 const label = (ref: string): string => keychain.kind(ref) === 'keyring' ? `keychain item "${ref}"` : ref
 
-// a get that throws (linux keyring unavailable) is not the same as a missing secret
-const read = (kc: Keychain, ref: string): { ok: boolean; missing: boolean } => {
-  try { return { ok: kc.get(ref) != null, missing: true } } catch { return { ok: false, missing: false } }
+// a get that throws (linux keyring unavailable) is not the same as a missing secret;
+// a macOS access-control denial ("user interaction is not allowed" / user canceled)
+// has its own fix — re-trust the item so /usr/bin/security stops prompting
+const read = (kc: Keychain, ref: string): { ok: boolean; missing: boolean; denied: boolean } => {
+  try { return { ok: kc.get(ref) != null, missing: true, denied: false } } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { ok: false, missing: false, denied: /user interaction is not allowed|user cancel/i.test(msg) }
+  }
 }
 
 const identityBits = (kc: Keychain, id: string, identity: Identity): DoctorCheck => {
@@ -126,9 +131,11 @@ const identityBits = (kc: Keychain, id: string, identity: Identity): DoctorCheck
     const r = read(kc, gw)
     parts.push(r.ok
       ? ['ok', 'gateway key']
-      : r.missing
-        ? ['fail', `gateway ${label(gw)} missing`]
-        : ['warn', `gateway ${label(gw)} unreadable — no keyring (env:/file: refs work without one)`])
+      : r.denied
+        ? ['warn', `gateway ${label(gw)} prompts for keychain access — barrito keychain trust`]
+        : r.missing
+          ? ['fail', `gateway ${label(gw)} missing`]
+          : ['warn', `gateway ${label(gw)} unreadable — no keyring (env:/file: refs work without one)`])
   } else {
     parts.push(['fail', 'gateway keychain item not configured'])
   }
@@ -137,7 +144,9 @@ const identityBits = (kc: Keychain, id: string, identity: Identity): DoctorCheck
     const r = read(kc, cur)
     parts.push(r.ok
       ? ['ok', 'cursor key']
-      : ['warn', `cursor ${label(cur)} ${r.missing ? 'missing' : 'unreadable — no keyring'}`])
+      : r.denied
+        ? ['warn', `cursor ${label(cur)} prompts for keychain access — barrito keychain trust`]
+        : ['warn', `cursor ${label(cur)} ${r.missing ? 'missing' : 'unreadable — no keyring'}`])
   }
   const level = parts.some((p) => p[0] === 'fail') ? 'fail' : parts.some((p) => p[0] === 'warn') ? 'warn' : 'ok'
   return { level, text: `${id}: ${parts.map((p) => p[1]).join(' · ')}` }
