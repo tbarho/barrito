@@ -1,6 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { fakeSecurity, parseSecurityI } from './fixtures/security.ts'
 import * as real from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -95,28 +97,59 @@ test('get: empty value → null', () => {
   assert.equal(macos.get('Empty', { exec }), null)
 })
 
-test('set: secret goes via stdin, never argv; /usr/bin/security is on the trusted-app list', () => {
-  const { calls, exec } = recorder()
+test('set: secret goes via `security -i` stdin, never argv; /usr/bin/security is on the trusted-app list', () => {
+  const { calls, store, exec } = fakeSecurity()
   macos.set('Vercel AI Gateway Work', 'sekret', { exec })
-  assert.deepEqual(calls[0]?.args, ['add-generic-password', '-U', '-s', 'Vercel AI Gateway Work', '-a', 'barrito', '-T', '/usr/bin/security', '-w'])
-  assert.equal(calls[0]?.opts.input, 'sekret\nsekret\n')
-  assert.equal(calls[0]?.opts.encoding, 'utf8')
+  assert.deepEqual(calls[0]?.args, ['-i'])
   assert.equal(calls[0]?.args.includes('sekret'), false)
+  assert.ok(calls[0]?.input?.includes('-T /usr/bin/security'))
+  assert.deepEqual(parseSecurityI(calls[0]?.input ?? ''), { service: 'Vercel AI Gateway Work', account: 'barrito', value: 'sekret', trusted: true })
+  assert.deepEqual(calls[1]?.args, ['find-generic-password', '-s', 'Vercel AI Gateway Work', '-w'])
+  assert.equal(store['Vercel AI Gateway Work'], 'sekret')
 })
 
 test('set: account override', () => {
-  const { calls, exec } = recorder()
+  const { calls, exec } = fakeSecurity()
   macos.set('Cursor', 'k', { account: 'ty', exec })
-  assert.deepEqual(calls[0]?.args, ['add-generic-password', '-U', '-s', 'Cursor', '-a', 'ty', '-T', '/usr/bin/security', '-w'])
-  assert.equal(calls[0]?.opts.input, 'k\nk\n')
+  assert.deepEqual(calls[0]?.args, ['-i'])
+  assert.equal(parseSecurityI(calls[0]?.input ?? '').account, 'ty')
 })
 
-test('set: value never rides argv — only stdin (trusted-app flags are argv)', () => {
-  const { calls, exec } = recorder()
-  macos.set('Cursor', 'sekret', { account: 'vercel-cli', exec })
-  assert.equal(calls[0]?.args.includes('sekret'), false)
-  assert.equal(calls[0]?.opts.input, 'sekret\nsekret\n')
-  assert.equal(calls[0]?.args.filter((a) => a === '-T').length, 1) // -T may repeat, value never does
+test('set: quoting round-trips a value with double quotes, backslashes and spaces', () => {
+  const { calls, store, exec } = fakeSecurity()
+  const v = 'a "b" \\c\\ d  e\\"'
+  macos.set('Q "svc"', v, { account: 'a\\cct', exec })
+  assert.equal(calls[0]?.input?.includes(macos.quote(v)), true)
+  assert.deepEqual(parseSecurityI(calls[0]?.input ?? ''), { service: 'Q "svc"', account: 'a\\cct', value: v, trusted: true })
+  assert.equal(store['Q "svc"'], v)
+  assert.equal(calls[0]?.args.some((a) => a.includes('b')), false)
+})
+
+test('set: read-back mismatch throws the verify error', () => {
+  const { exec } = fakeSecurity({}, { readBack: () => 'something-else' })
+  assert.throws(() => macos.set('Svc', 'sekret', { exec }), /barrito: keychain write to "Svc" did not verify/)
+})
+
+test('set: empty and multi-line values are refused before any exec', () => {
+  const { calls, exec } = fakeSecurity()
+  ;['', 'a\nb', 'a\r\nb', '\n'].forEach((v) => {
+    assert.throws(() => macos.set('Svc', v, { exec }), /refusing to store an empty or multi-line secret/)
+  })
+  assert.equal(calls.length, 0)
+})
+
+test('never prompts: no src call passes add-generic-password with `-w` as the last argv element', () => {
+  const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = path.join(dir, e.name)
+    if (e.isDirectory()) return walk(p)
+    return p.endsWith('.ts') ? [p] : []
+  })
+  const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src')
+  const bad = walk(srcDir).filter((f) => {
+    const t = readFileSync(f, 'utf8')
+    return /add-generic-password[^\n]*'-w'\s*\]/.test(t) || /add-generic-password[^;]*?'-w'\s*\]/s.test(t)
+  })
+  assert.deepEqual(bad, [])
 })
 
 // ── macOS has (attributes-only probe) and del ────────────────────────────────

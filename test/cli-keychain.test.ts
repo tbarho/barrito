@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import type { ExecFileSyncOptions } from 'node:child_process'
 import keychain from '../src/cli/keychain.ts'
 import { own } from '../src/cli/keychain.ts'
+import { parseSecurityI } from './fixtures/security.ts'
 import type { CommandCtx, Config, Exec, Identity, ModelRules } from '../src/types.ts'
 
 const keys = ['BARRITO_HOME', 'BARRITO_STATE', 'BARRITO_PLATFORM']
@@ -24,7 +25,7 @@ afterEach(() => {
 type Call = { bin: string; args: string[]; opts: ExecFileSyncOptions }
 
 // the security calls own makes: one value read per foreign item (the one prompt),
-// then the barrito-owned copy written with -T and the value twice on stdin
+// then the barrito-owned copy written via `security -i` (-T, value on stdin), then read back
 const recorder = (items: Record<string, { value: string }>) => {
   const calls: Call[] = []
   const read: string[] = []
@@ -38,9 +39,10 @@ const recorder = (items: Record<string, { value: string }>) => {
       read.push(item.value)
       return `${item.value}\n`
     }
-    if (args[0] === 'add-generic-password') {
-      const input = String(opts.input ?? '')
-      if (!read.some((v) => input === `${v}\n${v}\n`)) throw new Error('copy input is not a previously read value, twice on stdin')
+    if (args[0] === '-i') {
+      const p = parseSecurityI(String(opts.input ?? ''))
+      if (!read.includes(p.value)) throw new Error('copy input is not a previously read value')
+      items[p.service] = { value: p.value }
       return ''
     }
     throw new Error(`unexpected security args: ${args.join(' ')}`)
@@ -104,13 +106,14 @@ test('own: reads each foreign item once, writes the barrito-owned copy with -T a
     '✓ copied "Vercel AI Gateway" → "barrito: gateway personal" (original untouched)',
     '✓ copied "Cursor" → "barrito: cursor personal" (original untouched)',
   ])
-  const reads = calls.filter((c) => c.args[0] === 'find-generic-password')
+  const reads = calls.filter((c) => c.args[0] === 'find-generic-password' && !String(c.args[2]).startsWith('barrito:')) // read-backs of the owned copies excluded
   assert.equal(reads.length, 4, 'exactly one value read per foreign item — one prompt each')
-  const saves = calls.filter((c) => c.args[0] === 'add-generic-password')
+  const saves = calls.filter((c) => c.args[0] === '-i')
   assert.equal(saves.length, 4)
-  assert.deepEqual(saves[0]?.args, ['add-generic-password', '-U', '-s', 'barrito: gateway work', '-a', 'barrito', '-T', '/usr/bin/security', '-w'])
-  assert.equal(saves[0]?.opts.input, 'gw-work-key\ngw-work-key\n')
-  assert.equal(saves.some((s) => s.args.includes('gw-work-key')), false, 'value never rides argv')
+  assert.deepEqual(saves[0]?.args, ['-i'])
+  assert.deepEqual(parseSecurityI(String(saves[0]?.opts.input)), { service: 'barrito: gateway work', account: 'barrito', value: 'gw-work-key', trusted: true })
+  assert.ok(String(saves[0]?.opts.input).includes('-T /usr/bin/security'))
+  assert.equal(calls.some((c) => c.args.includes('gw-work-key')), false, 'value never rides argv')
   // the config's slots now point at the owned copies
   assert.equal(cfg.identities.work?.keychain.gateway, 'barrito: gateway work')
   assert.equal(cfg.identities.work?.keychain.cursor, 'barrito: cursor work')
@@ -118,7 +121,7 @@ test('own: reads each foreign item once, writes the barrito-owned copy with -T a
   assert.equal(cfg.identities.personal?.keychain.cursor, 'barrito: cursor personal')
   // originals never deleted or modified
   assert.equal(calls.some((c) => c.args[0] === 'delete-generic-password'), false)
-  assert.equal(calls.some((c) => c.args[0] === 'add-generic-password' && !c.args.includes('-T')), false)
+  assert.equal(saves.some((c) => !String(c.opts.input).includes('-T /usr/bin/security')), false)
 })
 
 test('own: a foreign ref shared by two identities is read once, copied per identity', () => {
@@ -127,8 +130,8 @@ test('own: a foreign ref shared by two identities is read once, copied per ident
   cfg.identities.work = idn({ id: 'work', keychain: { gateway: 'Vercel AI Gateway' } })
   cfg.identities.personal = idn({ id: 'personal', keychain: { gateway: 'Vercel AI Gateway' } })
   const { lines } = own(cfg.identities, { exec })
-  assert.equal(calls.filter((c) => c.args[0] === 'find-generic-password').length, 1)
-  assert.equal(calls.filter((c) => c.args[0] === 'add-generic-password').length, 2)
+  assert.equal(calls.filter((c) => c.args[0] === 'find-generic-password' && c.args[2] === 'Vercel AI Gateway').length, 1)
+  assert.equal(calls.filter((c) => c.args[0] === '-i').length, 2)
   assert.deepEqual(lines.filter((l) => l.startsWith('✓ copied')), [
     '✓ copied "Vercel AI Gateway" → "barrito: gateway work" (original untouched)',
     '✓ copied "Vercel AI Gateway" → "barrito: gateway personal" (original untouched)',

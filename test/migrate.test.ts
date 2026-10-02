@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { fakeSecurity, parseSecurityI } from './fixtures/security.ts'
 import { copy, env, snap } from './fixtures/home/_copy.ts'
 import { detect } from '../src/detect.ts'
 import type { Detected } from '../src/detect.ts'
@@ -214,13 +215,7 @@ test('apply: cursor keys land in keychain, never in stdout; statusline wraps; sh
 })
 
 test('apply keychain-own: reads each foreign item once, writes the owned copy with -T + stdin; config slots rewritten; originals never deleted', async () => {
-  type Call = { bin: string; args: string[]; input?: string }
-  const calls: Call[] = []
-  const exec = (bin: string, args: string[], opts: { input?: unknown } = {}): string => {
-    calls.push({ bin, args, input: typeof opts.input === 'string' ? opts.input : undefined })
-    if (args[0] === 'find-generic-password') return 'gw-work-key\n'
-    return ''
-  }
+  const { calls, exec } = fakeSecurity({ 'Vercel AI Gateway Work': 'gw-work-key' })
   const keychain = {
     get: (s: string): string | null => idx.get(s, { exec }),
     set: (s: string, v: string): void => idx.set(s, v, { exec }),
@@ -234,11 +229,14 @@ test('apply keychain-own: reads each foreign item once, writes the owned copy wi
   }, { kind: 'config', description: '', config }]
   await apply(actions, { fs, keychain, config, print: (s) => out.push(s) })
 
-  // one value read, then the owned copy: -T /usr/bin/security, value twice on stdin
-  assert.deepEqual(calls, [
-    { bin: '/usr/bin/security', args: ['find-generic-password', '-s', 'Vercel AI Gateway Work', '-w'], input: undefined },
-    { bin: '/usr/bin/security', args: ['add-generic-password', '-U', '-s', 'barrito: gateway work', '-a', 'barrito', '-T', '/usr/bin/security', '-w'], input: 'gw-work-key\ngw-work-key\n' },
+  // one value read, then the owned copy via `security -i` (-T /usr/bin/security, value on stdin), then read back
+  assert.deepEqual(calls.map((c) => c.args), [
+    ['find-generic-password', '-s', 'Vercel AI Gateway Work', '-w'],
+    ['-i'],
+    ['find-generic-password', '-s', 'barrito: gateway work', '-w'],
   ])
+  assert.deepEqual(parseSecurityI(calls[1]?.input ?? ''), { service: 'barrito: gateway work', account: 'barrito', value: 'gw-work-key', trusted: true })
+  assert.equal(calls.some((c) => c.args.includes('gw-work-key')), false, 'value never rides argv')
   assert.equal(calls.some((c) => c.args[0] === 'delete-generic-password'), false, 'originals are never deleted')
   assert.equal(config.identities.work?.keychain.gateway, 'barrito: gateway work')
   assert.match(out.join('\n'), /✓ "Vercel AI Gateway Work" → "barrito: gateway work" — the original is never touched/)

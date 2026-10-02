@@ -27,13 +27,21 @@ export const get = (service: string, { exec }: { exec?: Exec } = {}): string | n
   return value || null
 }
 
-// with no value after -w, `security` prompts "password" + "retype password" on stdin
-// (verified against the real CLI) — the secret goes via stdin, never argv
+// security's interactive-mode quoting: backslash and double quote are escaped
+export const quote = (s: string): string => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+
+// NEVER `add-generic-password -w` with no value: when a terminal is attached, `security`
+// ignores stdin and prompts on /dev/tty, storing whatever the user types (a real incident:
+// people type their login password there). The command goes to `security -i` on stdin, so
+// the secret is in neither argv nor a prompt, then the value is read back and compared.
 // -T puts the stable `security` binary on the item's trusted-app list: barrito always
 // reads through /usr/bin/security, so trusting it survives node upgrades and reinstalls
-// (without -T, only the creating binary's path is trusted — "Always Allow" rots)
 export const set = (service: string, value: string, { account = 'barrito', exec }: { account?: string; exec?: Exec } = {}): void => {
-  security(exec, ['add-generic-password', '-U', '-s', service, '-a', account, '-T', '/usr/bin/security', '-w'], { input: `${value}\n${value}\n` })
+  if (!value || /[\r\n]/.test(value)) throw new Error(`barrito: refusing to store an empty or multi-line secret in "${service}"`)
+  const cmd = `add-generic-password -U -s ${quote(service)} -a ${quote(account)} -T /usr/bin/security -w ${quote(value)}\n`
+  security(exec, ['-i'], { input: cmd })
+  const back = get(service, { exec })
+  if (back !== value) throw new Error(`barrito: keychain write to "${service}" did not verify — nothing else was changed`)
 }
 
 // existence without reading the secret: no -w, so only the item's attributes are
