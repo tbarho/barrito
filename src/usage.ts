@@ -58,6 +58,26 @@ is then deleted.
   barrito keychain own
   barrito keychain backups
   barrito keychain restore "barrito: gateway work" --from 2026-10-02T14:05`,
+  history: `usage: barrito history sync [--apply] [--json] [--include-unknown <identity>]
+
+Claude Code keeps session history and per-project memory under
+<claude_config_dir>/projects/<encoded cwd>/, so a project whose sessions sit in
+another identity's dir is invisible to /resume there. sync recovers each project
+dir's original cwd (the session file's cwd, else the decoded dir name) and
+resolves its identity exactly like the router: remote, then path, then default.
+Deleted worktrees are traced by session metadata (emdash/Conductor worktree
+name, git branch) to a known repo; anything still ambiguous is unknown — never
+guessed.
+
+Dry run by default: lists each from → to pair with its projects, session count,
+memory and how it resolved. --apply COPIES (never moves or deletes) into the
+target identity's projects/: a destination file with identical size + mtime is
+skipped, a differing one is never overwritten (reported as a conflict), mtimes
+are preserved, memory/ comes along. Re-running copies nothing.
+--include-unknown <identity> copies the unknowns there too.
+
+  barrito history sync
+  barrito history sync --apply`,
   pin: `usage: barrito pin <identity> <max|model>
 
 Identity-wide default for every session. 'max' never falls back — quota errors

@@ -113,6 +113,10 @@ test('plan is pure: no writes, stable order', () => {
   assert.deepEqual(at(actions[2], 'shims').names.sort(), ['claude', 'codex', 'cursor-agent', 'opencode'])
   assert.deepEqual(at(actions[2], 'shims').remove.map((f) => path.basename(f)), ['_ai-gateway-env.sh'])
   assert.deepEqual(at(actions[3], 'envrc').links.length, 3)
+  // histories: resolved per project like the router — Code/you/dotfiles → personal by path glob
+  const hist = at(actions.find((a) => a.kind === 'histories'), 'histories')
+  assert.equal(hist.description, 'copy 1 project history to personal (resolved by path)')
+  assert.deepEqual(hist.moves.map((m) => [m.from, m.to, m.how]), [['work', 'personal', 'path']])
   // the foreign gateway items exist in the fakes → adopted, slots rewritten to barrito-owned names
   assert.deepEqual(at(actions[4], 'keychain-own').copies, [
     { id: 'work', slot: 'gateway', from: 'Vercel AI Gateway Work', to: 'barrito: gateway work' },

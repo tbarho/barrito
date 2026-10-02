@@ -429,8 +429,8 @@ test('interactive: a third identity via scripted prompts lands in config with it
     [/default identity\?/, 'side'],
     [/logged in\? \(re-checks\)/, false],                     // personal — .claude (work) is logged in
     [/share rules\/skills\/agents/, true],                   // personal
-    [/copy .* personal project histories/, true],            // personal
     [/logged in\? \(re-checks\)/, false],                     // side — its dir is brand new
+    [/copy 2 project histories into the identity they resolve to \(side, personal\)/, true], // Code/acme → side (path), Code/you → personal
     [/When Max runs out/, 'cheap'],
     [/Compress tool output with rtk\?/, true],               // token savers
     [/How terse should replies be\? \(caveman\)/, 'ultra'],
@@ -518,7 +518,7 @@ test('login step: "logged in? (re-checks)" re-runs the injected account check, u
     [/logged in\? \(re-checks\)/, true],
     [/logged in\? \(re-checks\)/, true],
     [/share rules\/skills\/agents/, true],
-    [/copy .* personal project histories/, true],
+    [/copy \d+ project histories into the identity they resolve to/, true],
     [/When Max runs out/, 'cheap'],
     [/Compress tool output with rtk\?/, true],
     [/How terse should replies be\? \(caveman\)/, 'lite'],
@@ -548,7 +548,7 @@ test('login step: three failed re-checks continue with the doctor note', async (
     [/logged in\? \(re-checks\)/, true],
     [/logged in\? \(re-checks\)/, true],
     [/share rules\/skills\/agents/, true],
-    [/copy .* personal project histories/, true],
+    [/copy \d+ project histories into the identity they resolve to/, true],
     [/When Max runs out/, 'cheap'],
     [/Compress tool output with rtk\?/, true],
     [/How terse should replies be\? \(caveman\)/, 'lite'],

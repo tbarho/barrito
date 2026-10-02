@@ -17,7 +17,8 @@ import { rcOpen, rcClose, rcLines } from './detect.ts'
 import type { Detected } from './detect.ts'
 import type { Backup } from './backup.ts'
 import type { Recorder } from './keychain/index.ts'
-import type { Builtin, CatalogModel, ClaudeSettings, Config, Exec, Identity, Keychain, ModelRules, Print } from './types.ts'
+import * as history from './history.ts'
+import type { Builtin, CatalogModel, ClaudeSettings, Config, Exec, HistoryMove, Identity, Keychain, ModelRules, Print } from './types.ts'
 
 const SHARE = ['rules', 'skills', 'agents', 'CLAUDE.md']
 
@@ -40,7 +41,7 @@ export type Action =
   | { kind: 'cursor-keys'; description: string; moves: { file: string; service: string }[] }
   | { kind: 'dir'; description: string; dir: string }
   | { kind: 'share'; description: string; items: { from: string; to: string }[] }
-  | { kind: 'histories'; description: string; dirs: { from: string; to: string }[] }
+  | { kind: 'histories'; description: string; moves: HistoryMove[] }
   | { kind: 'settings'; description: string; dirs: { dir: string; fragment: SettingsFragment; same: boolean }[]; command: { from: string; to: string[] } | null }
   | { kind: 'opencode'; description: string; file: string; fragment: Record<string, unknown> }
   | { kind: 'config'; description: string; config: Config }
@@ -55,6 +56,7 @@ export interface Answers {
   replace?: boolean
   share?: boolean
   histories?: boolean
+  moves?: HistoryMove[]
   ts: string
   bin: string
   fs?: Fs
@@ -194,32 +196,6 @@ export const seed = (rules: ModelRules, rows: SeedRow[], catalog: CatalogModel[]
       suffix,
     },
   }
-}
-
-const decode = (name: string): string => name.replace(/^-/, '/').replaceAll('-', '/')
-const enc = (p: string): string => String(p).replace(/[^A-Za-z0-9]/g, '-')
-
-// a project dir matches a `…/**` path glob when its encoded name sits under the encoded
-// root — decoding is ambiguous (real paths contain '-' and '_'), encoding isn't
-const under = (paths: string[] | undefined, name: string): boolean => (paths ?? []).some((p) => {
-  if (!p.endsWith('/**')) return glob(p, decode(name))
-  const root = enc(p.slice(0, -3))
-  return name === root || name.startsWith(`${root}-`)
-})
-
-// personal project histories: ~/.claude/projects/<encoded path> matching the identity's
-// match.paths, copied into the new dir's projects/
-export const histories = (identity: Identity, fs: Fs): { from: string; to: string }[] => {
-  if (!identity.share_from) return []
-  const src = path.join(identity.share_from, 'projects')
-  if (!fs.existsSync(src)) return []
-  return fs.readdirSync(src).reduce<{ from: string; to: string }[]>((memo, name) => {
-    if (!under(identity.match.paths, name)) return memo
-    const to = path.join(identity.claude_config_dir, 'projects', name)
-    if (fs.existsSync(to)) return memo
-    memo.push({ from: path.join(src, name), to })
-    return memo
-  }, [])
 }
 
 const identityFor = (config: Config, dir: string): Identity | null =>
@@ -393,14 +369,17 @@ export const plan = (detected: Detected, answers: Answers): Action[] => {
     })
   }
 
-  const historyDirs = answers.histories === false ? [] : Object.values(next.identities).flatMap((i) => histories(i, fs))
-  if (historyDirs.length) {
+  const historyMoves = answers.histories === false ? [] : answers.moves ?? history.outstanding(next, { fs })
+  const targets = [...new Set(historyMoves.map((m) => m.to))]
+  targets.forEach((to) => {
+    const list = historyMoves.filter((m) => m.to === to)
+    const how = [...new Set(list.map((m) => m.how))].join('/')
     actions.push({
       kind: 'histories',
-      description: `copy ${historyDirs.length} personal project histor${historyDirs.length === 1 ? 'y' : 'ies'} into ${short(path.dirname(historyDirs[0]!.to))}`,
-      dirs: historyDirs,
+      description: `copy ${list.length} project histor${list.length === 1 ? 'y' : 'ies'} to ${to} (resolved by ${how})`,
+      moves: list,
     })
-  }
+  })
 
   const fragments = Object.values(next.identities).map((identity) => {
     const dir = identity.claude_config_dir
@@ -689,7 +668,10 @@ export const apply = async (actions: Action[], opts: ApplyOpts = {}): Promise<Co
       })
     }
     if (action.kind === 'histories') {
-      action.dirs.forEach(({ from, to }) => fs.cpSync(from, to, { recursive: true }))
+      action.moves.forEach((m) => {
+        history.copy(m, { fs })
+        m.conflicts.forEach((f) => print(`  ! ${short(m.target)}/${f} differs — never overwritten`))
+      })
     }
     if (action.kind === 'settings') {
       action.dirs.forEach(({ dir, fragment }) => st.merge(dir, fragment))

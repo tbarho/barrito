@@ -15,7 +15,8 @@ import { account } from '../claude.ts'
 import { detect, keyringRefs, probe } from '../detect.ts'
 import type { ClaudeAccount } from '../detect.ts'
 import { create as createBackup } from '../backup.ts'
-import { plan, apply, histories, short } from '../migrate.ts'
+import { plan, apply, short } from '../migrate.ts'
+import { outstanding } from '../history.ts'
 import { create, loc, prompts, version } from '../ui.ts'
 import type { Level, Prompts } from '../ui.ts'
 import type { Action, GraftRun, ServiceIo, WriteKeychain } from '../migrate.ts'
@@ -345,9 +346,14 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
     }
     if (identity.share_from && id === 'personal') {
       share = await ask(`share rules/skills/agents from ${short(identity.share_from)}?`)
-      const dirs = histories(identity, fs)
-      if (dirs.length) historiesAnswer = await ask(`copy ${dirs.length} personal project histories to ${short(identity.claude_config_dir)}?`)
     }
+  }
+  // project histories sitting in another identity's dir are invisible to /resume —
+  // resolved per project by remote → path → default, exactly like the router
+  const historyMoves = outstanding({ default: defaultId, identities: draft, graft: current.graft }, { fs })
+  if (historyMoves.length) {
+    const targets = [...new Set(historyMoves.map((m) => m.to))].join(', ')
+    historiesAnswer = await ask(`copy ${historyMoves.length} project histories into the identity they resolve to (${targets})?`)
   }
 
   const fallbacks = [
@@ -448,7 +454,7 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
   // a config without [transforms] must reach plan() transforms-less — load() injects the
   // defaults, which would hide a first-time [transforms] write from canon's diff
   const carried: Partial<Config> = txStep ? { ...current, transforms: undefined } : current
-  const actions = plan({ ...detected, keychain: keychainState }, { config: next, existing: carried, replace, share, histories: historiesAnswer, ts, bin, fs, catalog: models })
+  const actions = plan({ ...detected, keychain: keychainState }, { config: next, existing: carried, replace, share, histories: historiesAnswer, moves: historyMoves, ts, bin, fs, catalog: models })
 
   ui.section('Plan')
   if (catalogDown) ui.warn('gateway catalog unavailable — run `barrito models sync` once the router is up')

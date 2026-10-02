@@ -97,6 +97,28 @@ export interface Resolution {
   detail: string | null
 }
 
+// ── project histories (<claude_config_dir>/projects/<encoded cwd>/) ─────────
+
+export type HistoryHow = 'remote' | 'path' | 'default' | 'metadata' | 'unknown'
+
+export interface HistoryProject {
+  dir: string            // absolute project dir under the owning identity's projects/
+  cwd: string            // recovered original cwd (session `cwd`, else the decoded dir name)
+  sessions: number       // top-level *.jsonl files
+  memory: boolean        // memory/ holds at least one entry
+  from: string           // identity whose claude_config_dir holds the dir
+  to: string | null      // resolved identity; null when unknown
+  how: HistoryHow
+}
+
+export interface HistoryMove extends HistoryProject {
+  to: string
+  target: string         // <to's claude_config_dir>/projects/<dir name>
+  copy: string[]         // relative files missing at the target
+  same: number           // relative files already there with identical size + mtime
+  conflicts: string[]    // relative files at the target that differ — never overwritten
+}
+
 // ── router / tiers ───────────────────────────────────────────────────────────
 
 export type Tier = 'max' | 'fallback' | 'pinned'

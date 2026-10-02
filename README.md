@@ -161,6 +161,17 @@ barrito graft build [path]
 
 Wiring runs `graft init --yes --no-global --no-statusline --no-agents --no-build`, then `graft build`, and offers to install `@nanonets/graft` if missing. `graft init` writes tracked files (`.claude/`, `.mcp.json`, `AGENTS.md`) — committing them is your call. When a shim launches in a worktree of a grafted repo with no `graft/`, barrito starts a detached background build and returns immediately. Summaries are off by default; when on, Graft talks to `{gateway}/v1` with the repo's identity handle, so each repo bills its own identity's gateway.
 
+## Project histories
+
+Claude Code keeps session history and per-project memory under `<claude_config_dir>/projects/<encoded cwd>/` (the launch cwd with every non-alphanumeric turned into `-`). Each identity has its own config dir, so a project whose sessions sit in another identity's dir is invisible to `/resume`.
+
+```
+barrito history sync                 # dry run: from → to per project, sessions, memory, how it resolved
+barrito history sync --apply         # copy (never move) into the identity each project resolves to
+```
+
+Each project's original cwd comes from its newest session file's `cwd` (first matching line only), else the dir name walked back against the filesystem. The identity is resolved exactly like the router: git remote, then path glob, then the default. A cwd that no longer exists (a deleted emdash or Conductor worktree) is traced by session metadata — its worktree container name (`~/emdash/worktrees/<repo>-<hash>/…`, `<repo>/.emdash/…`, `~/conductor/workspaces/<repo>/…`) against `~/emdash/repositories/*`, `~/conductor/repos/*`, grafted repos and exact repo names in config remotes, or a feature `gitBranch` that still exists in exactly one identity's repos — and anything still ambiguous is `unknown`, listed and never guessed (`--include-unknown <identity>` copies those too). `--apply` copies file by file: a destination with identical size + mtime (or identical bytes) is skipped, a differing one is never overwritten (reported as a conflict), mtimes are preserved and `memory/` comes along. Re-runs copy nothing. `init` plans the same copy (`+ copy N project histories to <identity> (resolved by remote/path)`) and `doctor` warns while misplaced histories remain.
+
 ## Command reference
 
 Every command answers `--help` before doing anything. The CLI also answers `--version`.
@@ -171,6 +182,7 @@ Every command answers `--help` before doing anything. The CLI also answers `--ve
 | `barrito status [--json] [--markdown]` | Tier per identity, Max 5h/7d usage, reset times, API spend today. `--json` dumps the raw router payload; `--markdown` renders the same table for step summaries. |
 | `barrito which [path] [--json]` | Identity for a path and the rule that matched (env, remote, path, default). |
 | `barrito doctor [--json]` | PATH order, shims, service health, logins, secret refs, catalog drift, host restarts needed. Non-zero exit on any ✗. |
+| `barrito history sync [--apply] [--json] [--include-unknown <identity>]` | Find project histories (sessions + memory) living in the wrong identity's Claude dir; dry run by default, `--apply` copies them (never moves or overwrites). |
 | `barrito pin <identity> <max\|model>` | Identity-wide default for every session. `max` never falls back. A model can be a full gateway id or a short suffix (`glm-5.3`); short names resolve against the cached catalog, preferring the identity's fallback chain, then the picker. Ambiguous or unknown names exit 2. |
 | `barrito unpin <identity>` | Clear the pin; the tier state machine decides again per request. |
 | `barrito set <identity> [rtk on\|off] [caveman off\|lite\|full\|ultra] [--reset]` | Token savers for one identity. `rtk on/off`, `caveman off/lite/full/ultra`; `--reset` returns the identity to the config defaults (`[transforms]` + `[identities.<id>.transforms]`). |

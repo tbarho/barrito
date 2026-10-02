@@ -16,6 +16,7 @@ import { rcOf } from '../detect.ts'
 import { latest, read as readManifest } from '../backup.ts'
 import { base, fetchJson, nudges, parse as parseStatus, port } from './status.ts'
 import { account } from '../claude.ts'
+import { outstanding } from '../history.ts'
 import { create } from '../ui.ts'
 import type { Term } from '../ui.ts'
 import type { CommandCtx, Config, DoctorCheck, Exec, FetchJson, Identity, Keychain, Settings } from '../types.ts'
@@ -309,6 +310,15 @@ const backupBits = (config: Config | null, exec: Exec): DoctorCheck[] => {
   return [...over, ...gone]
 }
 
+// project histories in another identity's dir are invisible to /resume there
+const historyCheck = (config: Config | null): DoctorCheck | null => {
+  if (!config) return null
+  let n = 0
+  try { n = outstanding(config).length } catch { return null }
+  if (!n) return null
+  return { level: 'warn', text: `${n} project histor${n === 1 ? 'y lives' : 'ies live'} in another identity's dir (/resume can't see ${n === 1 ? 'it' : 'them'}) — barrito history sync` }
+}
+
 export const diagnose = async (
   config: Config | null,
   {
@@ -346,6 +356,8 @@ export const diagnose = async (
   if (rtk) results.push(rtk)
   const notifier = notifierCheck(pf, pathEnv)
   if (notifier) results.push(notifier)
+  const histories = historyCheck(config)
+  if (histories) results.push(histories)
   results.push(...modelsBits(config, settings.read), ...hosts(exec), ...backupBits(config, exec))
   return results
 }

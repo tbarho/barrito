@@ -165,6 +165,23 @@ Cache `<state>/which.json`:
 
 An entry is fresh while `fp` (sha over default, GITHUB_REPOSITORY and per-identity match config) matches and the git config file's mtime is unchanged; `dirs` maps subdirectories of a cached repo to its toplevel so warm lookups spawn zero git processes.
 
+## `src/history.ts` (owner: H)
+
+```ts
+export const enc = (p: string): string                       // Claude Code's project dir name: non-alphanumerics → '-'
+export const scan = ({ config, fs?, git? }) => HistoryProject[]   // every <claude_config_dir>/projects/* of every identity
+export const moves = (projects, { config, fs?, include? }) => HistoryMove[]   // misplaced (or unknown → include) + per-file plan
+export const pending = (m: HistoryMove) => boolean            // something left to copy (conflicts alone are reported, never pending)
+export const copy = (m: HistoryMove, { fs? } = {}) => string[] // COPY only (COPYFILE_EXCL), mtimes preserved; returns copied rel paths
+export const outstanding = (config, { fs?, git? } = {}) => HistoryMove[]  // scan → moves → pending; init + doctor
+// HistoryProject = { dir, cwd, sessions, memory, from, to: string | null, how: 'remote'|'path'|'default'|'metadata'|'unknown' }
+// HistoryMove = HistoryProject & { to: string, target, copy: string[], same: number, conflicts: string[] }
+```
+
+cwd: the first line carrying `"cwd"` in the newest `*.jsonl` (read line by line, never the whole file), else the encoded name walked back against the filesystem, else the lossy decode. An existing cwd resolves through `identity.resolve` (`env: {}`, `cache: false` — read-only). A missing cwd: metadata (worktree container name after `~/emdash/worktrees/`, `~/emdash/repositories/`, `~/conductor/{workspaces,repos,archived-contexts}/`, `/.emdash/`, `/.conductor/` — optional `-<hash>` — matched by encoded lower-case name against `~/emdash/repositories/*`, `~/conductor/repos/*`, `~/conductor/workspaces/<repo>`, `graft.repos` and star-less config remotes; longest name wins; else a non-trivial `gitBranch` that exists in exactly one identity's known repos) → path glob → `unknown`. More than one candidate identity is always `unknown`. A destination file with identical size + mtime (≤1ms) — or identical size + bytes (an earlier mtime-dropping copy) — counts as `same`; a differing one is a conflict and never overwritten. `scan`/`moves` never write.
+
+CLI `barrito history sync [--apply] [--json] [--include-unknown <identity>]` (`src/cli/history.ts`): dry run by default — one ui section per `from → to` pair (short cwd, session count, memory, how, conflicts), an unknown section, outro `N projects to copy (M sessions), K unknown, J already in place[, C conflicts]` (M = new top-level `*.jsonl`; J = resolved home + nothing left to copy). Unknown `--include-unknown` identity exits 2. `init`'s `histories` action carries `moves: HistoryMove[]` (one action per target identity, `copy N project histories to <id> (resolved by remote/path)`); `Answers.moves` lets init hand its prompt-time scan to `plan()`. `doctor` warns `N project histories live in another identity's dir … — barrito history sync` while `outstanding()` is non-empty.
+
 ## `src/harnesses.ts` (owner: C)
 
 ```ts
@@ -303,7 +320,7 @@ Commands other than `init` are `src/cli/<name>.ts` exporting `default async (arg
 - E: `models`
 - F: `graft`
 - G: `status`, `doctor`, `pin`, `unpin`, `set`, `logs`, `serve`, `stop`, `ci`, `statusline`, `uninstall`, slash command `templates/barrito-command.md`
-- H: `init`
+- H: `init`, `history`
 
 Exports the tests script against:
 
