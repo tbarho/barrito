@@ -5,7 +5,7 @@ import path from 'node:path'
 import pc from 'picocolors'
 import * as p from '@clack/prompts'
 import type { Option } from '@clack/prompts'
-import { paths, home, expand, platform } from '../paths.ts'
+import { paths, home, expand, platform, root } from '../paths.ts'
 import { load } from '../config.ts'
 import * as settings from '../settings.ts'
 import * as keychain from '../keychain/index.ts'
@@ -190,7 +190,7 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
     select: deps.prompts?.select ?? prompts.select,
     multiselect: deps.prompts?.multiselect ?? prompts.multiselect,
   }
-  const pkg = await import('../../package.json', { with: { type: 'json' } })
+  const pkg = JSON.parse(fs.readFileSync(path.join(root(), 'package.json'), 'utf8')) as { version?: string }
 
   const current = load()
   const ts = new Date().toISOString().slice(0, 16)
@@ -200,7 +200,7 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
   const ask = async (message: string, { value = true }: { value?: boolean } = {}): Promise<boolean> =>
     yes ? value : ui.confirm(message, { value })
 
-  p.intro(`barrito v${pkg.default.version} · one router, every identity`)
+  p.intro(`barrito v${pkg.version} · one router, every identity`)
   const detected = detect({ home: home(), exec: deps.exec, fs, path: deps.pathEnv, keychain: deps.keychain, shell: deps.shell })
 
   p.log.step('Agents found')
