@@ -7,12 +7,13 @@ import { paths } from '../paths.ts'
 import * as keychain from '../keychain/index.ts'
 import * as tiers from '../router/tiers.ts'
 import * as spend from '../router/spend.ts'
+import * as transforms from '../router/transforms.ts'
 import { notify } from '../router/notify.ts'
 import * as catalog from '../catalog.ts'
 import { start as startServer } from '../router/server.ts'
 import { create as createLog } from '../log.ts'
 import { tail } from './logs.ts'
-import type { CommandCtx, Config, Exec, FetchJson, Keychain, Log, Spawn, Spend, Tiers, Upstreams } from '../types.ts'
+import type { CommandCtx, Config, Exec, FetchJson, Keychain, Log, Spawn, Spend, Tiers, TransformState, Transforms, Upstreams } from '../types.ts'
 
 const DAY = 86400e3
 
@@ -24,6 +25,7 @@ export interface StartArgs {
   keychain: Keychain
   log: Log
   upstreams: Upstreams
+  transforms: Transforms
 }
 
 export interface ServerLike {
@@ -39,6 +41,7 @@ export interface ServeOpts {
   fetch?: FetchJson
   start?: (args: StartArgs) => Promise<ServerLike> | ServerLike
   upstreams?: Upstreams
+  transforms?: Transforms
   on?: (sig: 'SIGTERM' | 'SIGINT', fn: () => void) => void
   exit?: (code: number) => void
   // detached mode
@@ -91,6 +94,18 @@ const statusPid = async (fetch: FetchJson, port: number): Promise<number | null>
 }
 
 // ── detached mode: spawn `barrito serve` in the background, wait for its pidfile ──
+
+// [transforms] defaults + per-identity overrides resolve per identity for the transforms module
+export const transformDefaults = (config: Config): ((identityId: string) => TransformState) => {
+  const global = config.transforms
+  return (identityId: string): TransformState => {
+    const over = config.identities[identityId]?.transforms ?? {}
+    return {
+      rtk: over.rtk ?? global?.rtk ?? true,
+      caveman: over.caveman ?? global?.caveman ?? 'lite',
+    }
+  }
+}
 
 const spawnDefault: Spawn = (cmd, opts = {}) => {
   const [bin, ...rest] = cmd
@@ -242,6 +257,7 @@ export default async (argv: string[], ctx: CommandCtx, opts: ServeOpts = {}): Pr
     prices: (id: string) => catalog.price(catalog.cached({ statePath }) || [], id),
     statePath,
   })
+  const tx = opts.transforms ?? transforms.create({ defaults: transformDefaults(config), statePath })
   const kc = opts.keychain ?? keychain
 
   // refresh the catalog once a day with the first identity's gateway key; never crash the router
@@ -259,6 +275,7 @@ export default async (argv: string[], ctx: CommandCtx, opts: ServeOpts = {}): Pr
     spend: s,
     keychain: kc,
     log,
+    transforms: tx,
     upstreams: opts.upstreams ?? {
       direct: process.env.BARRITO_DIRECT || 'https://api.anthropic.com',
       gateway: process.env.BARRITO_GATEWAY || 'https://ai-gateway.vercel.sh',

@@ -310,6 +310,19 @@ footer nav a:hover{color:var(--orange)}
   .code pre{padding:14px 16px}
   footer{padding:44px 0 32px}
 }
+
+/* canvas fx (assets/effects.js) */
+footer{position:relative}
+.fx-field{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:-1}
+.fx-fade{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;background:linear-gradient(180deg,transparent 58%,#131210 97%)}
+.fx-fade[data-rendered]{background:none}
+.fx-dust{position:absolute;left:-26px;top:-26px;width:calc(100% + 52px);height:calc(100% + 52px);pointer-events:none;z-index:-1}
+.install{position:relative;--mx:50%;--my:50%}
+@supports (-webkit-mask-composite:xor) or (mask-composite:exclude){
+.install::after{content:"";position:absolute;inset:-1px;border-radius:9px;padding:1px;pointer-events:none;background:radial-gradient(180px circle at var(--mx) var(--my),rgba(255,128,1,.6),rgba(255,128,1,0) 70%);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;opacity:0;transition:opacity .25s}
+.install:hover::after{opacity:1}
+}
+@media (prefers-reduced-motion:reduce){.install::after{transition:none}}
 </style>
 </head>
 <body>
@@ -337,6 +350,8 @@ footer nav a:hover{color:var(--orange)}
 <main id="top">
 <!-- HERO -->
 <section class="hero">
+  <canvas class="fx-field" data-fx="hero" aria-hidden="true"></canvas>
+  <canvas class="fx-fade" aria-hidden="true"></canvas>
   <div class="wrap">
     <div class="logow">
       <img class="logo" src="assets/logo-512.png" width="512" height="512" alt="barrito cartoon burrito mascot" decoding="async" fetchpriority="high">
@@ -593,6 +608,11 @@ footer nav a:hover{color:var(--orange)}
         <h3>Any host</h3>
         <p>Identity resolves in the shim at exec time, not in whatever env the host started with — so emdash, Conductor and tmux worktrees need zero per-host setup. One restart after install picks up the new PATH.</p>
       </div>
+      <div class="card span2">
+        <span class="glyph" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="#b3ac9f" stroke-width="1.4"><path d="M2 3h12M2 13h12M8 5v2.5M8 11V8.5M6.2 6.2 8 7.5l1.8-1.3M6.2 9.8 8 8.5l1.8 1.3"/></svg></span>
+        <h3>Token savers</h3>
+        <p>Fewer tokens, same answers. RTK compresses noisy tool output before it reaches the model — each output compressed once and cached, so prompt caching stays intact — and caveman trims reply prose from off to ultra while code, commands and errors stay verbatim. Both live in the router, so every harness gets them, and both are one command from off.</p>
+      </div>
       <div class="card">
         <span class="glyph" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="#b3ac9f" stroke-width="1.4"><circle cx="5.5" cy="8" r="2.5"/><path d="M8 8h6M11 8v2.5M13.5 8V6"/></svg></span>
         <h3>Keys stay out of agent env</h3>
@@ -603,7 +623,7 @@ footer nav a:hover{color:var(--orange)}
         <h3>Picker from rules</h3>
         <p><span class="ic">models sync</span> renders the gateway catalog through your rules into <span class="ic">/model</span> rows, per identity. Idempotent; rerun any time.</p>
       </div>
-      <div class="card">
+      <div class="card span2">
         <span class="glyph" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="#b3ac9f" stroke-width="1.4"><circle cx="3.5" cy="12.5" r="2"/><circle cx="12.5" cy="3.5" r="2"/><path d="M5 11 11 5"/></svg></span>
         <h3>Graft built in</h3>
         <p>Pick repos at init. New worktrees of a grafted repo build their per-repo code graph in the background.</p>
@@ -624,7 +644,7 @@ footer nav a:hover{color:var(--orange)}
         <thead><tr><th>Level</th><th>Harnesses</th><th>What you get</th></tr></thead>
         <tbody>
           <tr><td><span class="lvl full">Full</span></td><td>Claude Code</td><td>Max direct, quota tracking, loud fallback, <span class="ic">/barrito</span> slash command, statusline.</td></tr>
-          <tr><td><span class="lvl">Gateway</span></td><td>Codex, OpenCode, custom scripts, AI SDK apps</td><td>The identity's gateway key via the local proxy. No format translation — the router swaps a handle for a key and reverse-proxies unchanged.</td></tr>
+          <tr><td><span class="lvl">Gateway</span></td><td>Codex, OpenCode, custom scripts, AI SDK apps</td><td>The identity's gateway key via the local proxy. No format translation — the router swaps a handle for a key and reverse-proxies the request.</td></tr>
           <tr><td><span class="lvl">Env</span></td><td>cursor-agent</td><td>The identity's Cursor key injected into the environment; Cursor's backend can't be proxied.</td></tr>
         </tbody>
       </table>
@@ -658,7 +678,7 @@ env = { OPENAI_BASE_URL = "{gateway}/v1", OPENAI_API_KEY = "{handle}" }</pre>
     <div class="head">
       <p class="eyebrow"><span class="no">05</span> When Max runs out</p>
       <h2>Cheap first, <span class="funky">loudly.</span></h2>
-      <p class="lead">A per-identity tier state machine keeps a spent quota spent across restarts. The triggering error arrives before any stream bytes, so the same request is retried on the fallback chain immediately — you see an answer, not an error. Model output is never mutated.</p>
+      <p class="lead">A per-identity tier state machine keeps a spent quota spent across restarts. The triggering error arrives before any stream bytes, so the same request is retried on the fallback chain immediately — you see an answer, not an error.</p>
     </div>
 
     <div class="demo">
@@ -721,11 +741,51 @@ env = { OPENAI_BASE_URL = "{gateway}/v1", OPENAI_API_KEY = "{handle}" }</pre>
   </div>
 </section>
 
+<!-- TOKEN SAVERS -->
+<section id="tokens">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow"><span class="no">06</span> Token savers</p>
+      <h2>Fewer tokens, <span class="funky">same</span> answers.</h2>
+      <p class="lead">Two transforms run inside the router, so every harness gets them without per-tool setup — and both are one command from off.</p>
+    </div>
+
+    <div class="demo">
+      <div>
+        <ul class="notes" style="margin-top:0">
+          <li><b>RTK</b>Noisy tool output — git diffs, listings, grep, test and build logs — is compressed through your installed <span class="ic">rtk</span> before it reaches the model. Each output is compressed once and cached, so prompt caching stays intact. On for every harness — Claude Code, Codex, OpenCode, custom — because it happens in the router. Default on.</li>
+          <li><b>Caveman</b>Terse replies — <span class="ic">off · lite · full · ultra</span>. Code, commands and errors stay verbatim. Default lite.</li>
+          <li><b>Toggle anywhere</b><span class="ic">[transforms]</span> in config with per-identity overrides, <span class="ic">barrito set work caveman ultra</span> in your terminal, or <span class="ic">/barrito rtk off</span> inside Claude Code. The statusline shows what's active — <span class="ic">work · Max 62% · rtk · cave:lite</span> — and <span class="ic">barrito status</span> shows tokens saved today.</li>
+        </ul>
+        <p style="margin:18px 0 0;font-family:var(--mono);font-size:12px;color:var(--faint)">RTK by its authors — barrito just pipes through it.</p>
+      </div>
+      <div class="stack">
+        <div class="code">
+          <div class="lbl"><span>~/.config/barrito/config.toml</span><span>toml</span></div>
+<pre><span class="m">[transforms]</span>
+rtk = true
+caveman = "lite"
+
+<span class="m">[identities.personal.transforms]</span>
+caveman = "ultra"</pre>
+        </div>
+        <div class="term">
+          <div class="term-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="t">terminal</span></div>
+<pre><span class="d">$</span> barrito set work caveman ultra
+<span class="d">$</span> barrito set personal rtk off
+
+<span class="m">statusline   work · Max 62% · rtk · cave:lite</span></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- MODELS -->
 <section id="models">
   <div class="wrap">
     <div class="head">
-      <p class="eyebrow"><span class="no">06</span> Models</p>
+      <p class="eyebrow"><span class="no">07</span> Models</p>
       <h2>The picker writes itself.</h2>
       <p class="lead">Claude Code can't discover gateway models under Max OAuth, so barrito registers them from your rules — rerun any time new models land. Other harnesses need nothing: OpenCode reads the catalog itself, Codex takes any ID via <span class="ic">-m</span>, Cursor uses its own models.</p>
     </div>
@@ -762,7 +822,7 @@ pin            = ["meta/muse-spark-1.3-contributor"]</pre>
 <section id="ci">
   <div class="wrap">
     <div class="head">
-      <p class="eyebrow"><span class="no">07</span> CI</p>
+      <p class="eyebrow"><span class="no">08</span> CI</p>
       <h2>Max in CI. Cheap when it's spent.</h2>
       <p class="lead">Claude Code jobs in GitHub Actions run through genuine Claude Code with your Max OAuth token. When Max runs out mid-run, the job doesn't fail — it falls back to GLM on the repo's gateway key, and the run gets a visible warning annotation plus a step summary.</p>
     </div>
@@ -788,7 +848,7 @@ pin            = ["meta/muse-spark-1.3-contributor"]</pre>
       </div>
       <div class="panel">
         <p class="eyebrow">How it works</p>
-        <p style="margin:0;color:var(--dim);font-size:15px"><span class="ic">barrito ci</span> writes shims to <span class="ic">$GITHUB_PATH</span>, the router env to <span class="ic">$GITHUB_ENV</span>, starts the router detached and waits for <span class="ic">/health</span>. <span class="ic">ci stop</span> writes <span class="ic">status --markdown</span> into the step summary and never fails the job — pair it with <span class="ic">if: always()</span>. Without <span class="ic">CLAUDE_CODE_OAUTH_TOKEN</span> the job still runs, on the gateway chain only. Compliance is unchanged in CI: Max only ever flows through genuine Claude Code; every other tool stays on the repo's gateway key.</p>
+        <p style="margin:0;color:var(--dim);font-size:15px"><span class="ic">barrito ci</span> writes shims to <span class="ic">$GITHUB_PATH</span>, the router env to <span class="ic">$GITHUB_ENV</span>, starts the router detached and waits for <span class="ic">/health</span>. <span class="ic">ci stop</span> writes <span class="ic">status --markdown</span> into the step summary and never fails the job — pair it with <span class="ic">if: always()</span>. Without <span class="ic">CLAUDE_CODE_OAUTH_TOKEN</span> the job still runs, on the gateway chain only. Compliance holds in CI: Max only ever flows through genuine Claude Code; every other tool stays on the repo's gateway key.</p>
       </div>
     </div>
 
@@ -809,13 +869,13 @@ pin            = ["meta/muse-spark-1.3-contributor"]</pre>
 <section id="compliance">
   <div class="wrap">
     <div class="head">
-      <p class="eyebrow"><span class="no">08</span> Compliant by design</p>
+      <p class="eyebrow"><span class="no">09</span> Compliant by design</p>
       <h2>Nothing to hide, so nothing to <span class="funky">trace.</span></h2>
       <p class="lead">barrito routes traffic. It doesn't disguise it. Every request goes to a provider you pay, from the client that provider expects.</p>
     </div>
     <div class="comp">
       <ul class="rules">
-        <li><span class="n">01</span><span><strong>Max OAuth only ever originates from genuine Claude Code → Anthropic direct.</strong> The router forwards those requests unchanged except stripping barrito's own headers, so Anthropic sees normal Claude Code traffic.</span></li>
+        <li><span class="n">01</span><span><strong>Max OAuth only ever originates from genuine Claude Code → Anthropic direct.</strong></span></li>
         <li><span class="n">02</span><span><strong>Non-Claude-Code tools never touch Max</strong> — gateway keys only.</span></li>
         <li><span class="n">03</span><span><strong>Fallback = a different provider on your paid gateway key,</strong> not another subscription.</span></li>
       </ul>
@@ -848,6 +908,10 @@ pin            = ["meta/muse-spark-1.3-contributor"]</pre>
       <details>
         <summary>What happens when Max runs out?</summary>
         <p>barrito sees the 5h or 7d window is spent and routes Claude Code to GLM 5.3, then DeepSeek V4.1 Flash, on that identity's gateway key. You get a notification, a statusline change and an <span class="ic">x-barrito-tier</span> header. When the window resets, it switches back to Max automatically.</p>
+      </details>
+      <details>
+        <summary>Does compression change answers?</summary>
+        <p>No. RTK only trims noisy tool output above a size floor and falls back to the raw bytes on any error; caveman changes reply style, not substance — code, commands and errors stay verbatim. Both are off with one command: <span class="ic">barrito set personal rtk off</span> or <span class="ic">barrito set personal caveman off</span>.</p>
       </details>
       <details>
         <summary>Can I force a model?</summary>
@@ -891,6 +955,7 @@ pin            = ["meta/muse-spark-1.3-contributor"]</pre>
 </section>
 </main>
 <footer>
+  <canvas class="fx-field" data-fx="footer" aria-hidden="true"></canvas>
   <div class="wrap">
     <div class="f-top">
       <div>
@@ -906,6 +971,7 @@ pin            = ["meta/muse-spark-1.3-contributor"]</pre>
         <a href="#features">Features</a>
         <a href="#harnesses">Harnesses</a>
         <a href="#fallback">When Max runs out</a>
+        <a href="#tokens">Token savers</a>
         <a href="#models">Models</a>
         <a href="#ci">CI</a>
         <a href="#compliance">Compliance</a>
@@ -1016,5 +1082,6 @@ pin            = ["meta/muse-spark-1.3-contributor"]</pre>
   replay.addEventListener('click', play);
 })();
 </script>
+<script defer src="assets/effects.js"></script>
 </body>
 </html>

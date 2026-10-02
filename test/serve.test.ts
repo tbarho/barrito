@@ -5,9 +5,9 @@ import os from 'node:os'
 import path from 'node:path'
 import serve from '../src/cli/serve.ts'
 import type { ServeOpts, ServerLike, StartArgs } from '../src/cli/serve.ts'
-import { startDetached, stopDetached } from '../src/cli/serve.ts'
+import { startDetached, stopDetached, transformDefaults } from '../src/cli/serve.ts'
 import * as catalog from '../src/catalog.ts'
-import type { CommandCtx, Config, FetchJson, Identity, Spawn } from '../src/types.ts'
+import type { CommandCtx, Config, FetchJson, Identity, Spawn, Transforms } from '../src/types.ts'
 
 const keys = ['BARRITO_HOME', 'BARRITO_STATE', 'BARRITO_LOG', 'BARRITO_PORT']
 let prev: Record<string, string | undefined>
@@ -108,6 +108,31 @@ test('serve wires tiers, spend, keychain, log and defaults to start()', async ()
   assert.equal(readFileSync(process.env.BARRITO_LOG ?? '', 'utf8'), 'hello serve\n')
 
   assert.deepEqual(server.listens, [{ port: 4142, host: '127.0.0.1' }])
+})
+
+test('serve wires transforms to start() — injectable for tests', async () => {
+  const tx: Transforms = {
+    state: () => ({ rtk: true, caveman: 'lite' }),
+    set: () => ({ rtk: true, caveman: 'lite' }),
+    anthropic: (_id, body) => ({ body, applied: { rtk: 0, caveman: 'off', saved: 0 } }),
+    openai: (_id, body) => ({ body, applied: { rtk: 0, caveman: 'off', saved: 0 } }),
+    available: () => true,
+    stats: () => ({}),
+  }
+  const { started } = await run([], { transforms: tx })
+  assert.equal(started?.transforms, tx)
+})
+
+test('transformDefaults resolves [transforms] globals with per-identity overrides', () => {
+  const cfg = config()
+  cfg.transforms = { rtk: false, caveman: 'ultra' }
+  cfg.identities.work!.transforms = { rtk: true }
+  const defaults = transformDefaults(cfg)
+  assert.deepEqual(defaults('work'), { rtk: true, caveman: 'ultra' })
+  assert.deepEqual(defaults('ghost'), { rtk: false, caveman: 'ultra' })
+
+  const bare = config() // config without [transforms] → the built-in defaults
+  assert.deepEqual(transformDefaults(bare)('work'), { rtk: true, caveman: 'lite' })
 })
 
 test('serve prints the listening line', async () => {

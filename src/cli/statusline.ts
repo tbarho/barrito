@@ -42,16 +42,21 @@ const ours = async (raw: string, config: Config, { fetch: f = fetch, resolve: r 
   const limits = input.rate_limits ?? {}
   const resets = when(limits.resets_at)
 
+  // token savers on the tail — parts that are off are omitted
+  const st = data.transforms?.[id]?.state
+  const savers = [st?.rtk ? 'rtk' : '', st && st.caveman !== 'off' ? `cave:${st.caveman}` : ''].filter(Boolean)
+  const tail = savers.length ? ` · ${savers.join(' · ')}` : ''
+
   if (!s || s.tier === 'max' || s.pin === 'max' || !s.model) {
     const used = limits.five_hour?.used_percentage ?? (s?.util5h != null ? Math.round(s.util5h * 100) : null)
-    return used == null ? id : `${id} · Max ${Math.round(used)}%`
+    return (used == null ? id : `${id} · Max ${Math.round(used)}%`) + tail
   }
 
   const parts = [id, `⚠ ${label(config, s.model)}`]
   if (Number(data.spend?.[id] ?? 0) > 0) parts.push('API $')
   const reset = resets ?? s.resetAt
   if (reset) parts.push(`Max ↺ ${hhmm(reset)}`)
-  return parts.join(' · ')
+  return parts.join(' · ') + tail
 }
 
 export type SpawnLike = (cmd: string, opts: { shell: boolean; input: string; encoding: 'utf8' }) => { stdout: string }

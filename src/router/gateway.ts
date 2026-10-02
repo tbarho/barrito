@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { body, catalogId, fail, forward, line, meter, parse, reply } from './routes.ts'
+import { body, catalogId, fail, forward, line, meter, parse, reply, transform, transformsHeader, transformsLog } from './routes.ts'
 import type {
-  GatewayIdentity, Keychain, Keys, Log, RouterConfig, SendOpts, Spend, Upstreams, UpstreamResponse,
+  Applied, GatewayIdentity, Keychain, Keys, Log, RouterConfig, SendOpts, Spend, Transforms, Upstreams, UpstreamResponse,
 } from '../types.ts'
 
 // gateway keys live in the Keychain; cache in memory, re-read once on upstream 401
@@ -56,12 +56,13 @@ const handleOf = (authorization: string | undefined): string | null => {
 export const proxy = async (
   req: IncomingMessage,
   res: ServerResponse,
-  { config, keys, upstreams, spend, log, t0, maxBody }: {
+  { config, keys, upstreams, spend, log, transforms, t0, maxBody }: {
     config: RouterConfig
     keys: Keys
     upstreams: Upstreams
     spend: Spend
     log: Log
+    transforms?: Transforms
     t0: number
     maxBody: number
   },
@@ -87,12 +88,22 @@ export const proxy = async (
   }
   const headers = forward(req.headers, { proxy: true })
   headers.authorization = `Bearer ${key}`
-  const url = upstreams.gateway + (req.url ?? '').replace(/^\/gateway/, '')
+  // /gateway/*/chat/completions bodies go through the openai shape, /gateway/*/messages the anthropic one
+  const target = (req.url ?? '').replace(/^\/gateway/, '')
+  const isJson = String(req.headers['content-type'] ?? '').includes('application/json')
+  const kind: 'openai' | 'anthropic' | null = /\/chat\/completions$/.test(target)
+    ? 'openai'
+    : /\/messages$/.test(target)
+      ? 'anthropic'
+      : null
+  const t = kind && isJson ? transform(transforms, kind, id ?? '', raw) : { out: raw, body: null, applied: undefined as Applied | undefined }
+  const applied = t.applied ?? { rtk: 0, caveman: 'off' as const, saved: 0 }
+  const url = upstreams.gateway + target
   let up: UpstreamResponse
   try {
     up = await send(url, req, {
       headers,
-      body: raw.length ? raw : undefined,
+      body: t.out.length ? t.out : undefined,
       key,
       keys,
       identity,
@@ -105,14 +116,22 @@ export const proxy = async (
     return
   }
   const sse = (up.headers.get('content-type') || '').includes('text/event-stream')
-  const model = catalogId(parse(raw).model)
+  const model = catalogId(parse(t.out).model)
   const m = meter()
   reply(up, res, {
+    transforms: transforms ? transformsHeader(applied) : undefined,
     tap: (chunk: Buffer) => m.push(chunk, sse),
     done: () => {
       const usage = m.done(sse)
       if (usage && model) spend.record(id || '-', model, usage)
     },
   })
-  line(log, t0, { id: id || '-', method: req.method, path: req.url ?? '', to: 'gateway', status: up.status })
+  line(log, t0, {
+    id: id || '-',
+    method: req.method,
+    path: req.url ?? '',
+    to: 'gateway',
+    status: up.status,
+    transforms: transforms ? transformsLog(applied) : undefined,
+  })
 }

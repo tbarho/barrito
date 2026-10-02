@@ -4,7 +4,7 @@ import http from 'node:http'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { default as statusCmd, table, markdown } from '../src/cli/status.ts'
+import { default as statusCmd, parse, table, markdown } from '../src/cli/status.ts'
 import { default as pin } from '../src/cli/pin.ts'
 import { default as unpin } from '../src/cli/unpin.ts'
 import { root } from '../src/paths.ts'
@@ -123,10 +123,41 @@ const statusServer = () => startServer((req, res) => {
 test('table matches the plan layout', () => {
   const lines = table({ identities: { work: idn(), personal: idn() } }, payload)
   assert.deepEqual(lines, [
-    'IDENTITY   TIER          MAX 5H   MAX 7D   RESETS   API TODAY',
-    `work       max           62%      41%      ${hhmm(resetA)}    $0.00`,
-    'personal   ⚠ glm-5.3     100%     88%      14:05    $1.84',
+    'IDENTITY   TIER          MAX 5H   MAX 7D   RESETS   API TODAY  TRANSFORMS',
+    `work       max           62%      41%      ${hhmm(resetA)}    $0.00      —`,
+    'personal   ⚠ glm-5.3     100%     88%      14:05    $1.84      —',
   ])
+})
+
+test('table TRANSFORMS column: rtk · cave:<level>, parts off omitted, saved today', () => {
+  const withTx: StatusData = {
+    ...payload,
+    rtk: true,
+    transforms: {
+      work: { state: { rtk: true, caveman: 'ultra' }, saved: 4096, compressed: 2 },
+      personal: { state: { rtk: false, caveman: 'off' }, saved: 0, compressed: 0 },
+    },
+  }
+  const lines = table({ identities: { work: idn(), personal: idn() } }, withTx)
+  assert.equal(lines[1], `work       max           62%      41%      ${hhmm(resetA)}    $0.00      rtk · cave:ultra · 4.0kB saved`)
+  assert.equal(lines[2], 'personal   ⚠ glm-5.3     100%     88%      14:05    $1.84      —')
+})
+
+test('parse extracts transforms state and rtk availability', () => {
+  const data = parse({
+    pid: 1,
+    uptime: 0,
+    identities: {},
+    spend: {},
+    rtk: true,
+    transforms: {
+      work: { state: { rtk: true, caveman: 'ultra' }, saved: 100, compressed: 3 },
+      ghost: { state: { rtk: false, caveman: 'nope' }, saved: 0, compressed: 0 },
+    },
+  })
+  assert.equal(data?.rtk, true)
+  assert.deepEqual(data?.transforms?.work, { state: { rtk: true, caveman: 'ultra' }, saved: 100, compressed: 3 })
+  assert.deepEqual(data?.transforms?.ghost?.state, { rtk: false, caveman: 'off' })
 })
 
 test('status prints the table from a live /status server', async (t) => {
@@ -135,9 +166,9 @@ test('status prints the table from a live /status server', async (t) => {
   const c = ctx(portOf(server))
   await statusCmd([], c)
   assert.deepEqual(c.printed, [
-    'IDENTITY   TIER          MAX 5H   MAX 7D   RESETS   API TODAY',
-    `work       max           62%      41%      ${hhmm(resetA)}    $0.00`,
-    'personal   ⚠ glm-5.3     100%     88%      14:05    $1.84',
+    'IDENTITY   TIER          MAX 5H   MAX 7D   RESETS   API TODAY  TRANSFORMS',
+    `work       max           62%      41%      ${hhmm(resetA)}    $0.00      —`,
+    'personal   ⚠ glm-5.3     100%     88%      14:05    $1.84      —',
   ])
   assert.deepEqual(c.codes, [])
 })
@@ -162,10 +193,10 @@ test('status with the router down exits 1 and points at doctor', async () => {
 
 test('markdown renders the GFM table plus a line per fallen-back identity', () => {
   assert.deepEqual(markdown({ identities: { work: idn(), personal: idn() } }, payload), [
-    '| Identity | Tier | Max 5h | Max 7d | Resets | API today |',
-    '| --- | --- | --- | --- | --- | --- |',
-    `| work | max | 62% | 41% | ${hhmm(resetA)} | $0.00 |`,
-    '| personal | glm-5.3 | 100% | 88% | 14:05 | $1.84 |',
+    '| Identity | Tier | Max 5h | Max 7d | Resets | API today | Transforms |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
+    `| work | max | 62% | 41% | ${hhmm(resetA)} | $0.00 | — |`,
+    '| personal | glm-5.3 | 100% | 88% | 14:05 | $1.84 | — |',
     '⚠ personal fell back to glm-5.3 (quota)',
   ])
 })
@@ -180,7 +211,7 @@ test('markdown escapes pipes, backticks and newlines in ids, models and reasons'
     spend: {},
   }
   const lines = markdown({ identities: { 'bo|t`x': idn() } }, weird)
-  assert.equal(lines[2], '| bo\\|t\\`x | glm\\|5\\` | 50% | 50% | — | $0.00 |')
+  assert.equal(lines[2], '| bo\\|t\\`x | glm\\|5\\` | 50% | 50% | — | $0.00 | — |')
   assert.equal(lines[3], '⚠ bo\\|t\\`x fell back to glm\\|5\\` (quota)')
 })
 
@@ -200,10 +231,10 @@ test('status --markdown prints the table from a live /status server', async (t) 
   const c = ctx(portOf(server))
   await statusCmd(['--markdown'], c)
   assert.deepEqual(c.printed, [
-    '| Identity | Tier | Max 5h | Max 7d | Resets | API today |',
-    '| --- | --- | --- | --- | --- | --- |',
-    `| work | max | 62% | 41% | ${hhmm(resetA)} | $0.00 |`,
-    '| personal | glm-5.3 | 100% | 88% | 14:05 | $1.84 |',
+    '| Identity | Tier | Max 5h | Max 7d | Resets | API today | Transforms |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
+    `| work | max | 62% | 41% | ${hhmm(resetA)} | $0.00 | — |`,
+    '| personal | glm-5.3 | 100% | 88% | 14:05 | $1.84 | — |',
     '⚠ personal fell back to glm-5.3 (quota)',
   ])
 })

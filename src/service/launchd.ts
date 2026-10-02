@@ -8,7 +8,7 @@ export const uid = (): number => process.getuid!()
 
 export const run = (exec: Exec | undefined, args: string[]): string => {
   if (exec) return exec('/bin/launchctl', args, { encoding: 'utf8' })
-  return execFileSync('/bin/launchctl', args, { encoding: 'utf8' })
+  return execFileSync('/bin/launchctl', args, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] })
 }
 
 const esc = (s: unknown): string => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')

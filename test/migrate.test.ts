@@ -78,6 +78,7 @@ const next = (): Config => ({
   models: load().models,
   graft: { roots: [path.join(home, 'Code')], repos: [] },
   harness: {},
+  transforms: { rtk: true, caveman: 'lite' },
 })
 
 const answers = (config: Config, detected: Detected, extra: Partial<Answers> = {}): Answers => ({
@@ -244,6 +245,33 @@ test('replace: false keeps the legacy setup untouched', () => {
   const detected = detect({ home, exec: f.exec, fs, path: `${home}/bin:/usr/bin:/bin`, keychain: f.keychain, shell: '/bin/zsh' })
   const actions = plan(detected, answers(next(), detected, { replace: false }))
   assert.deepEqual(actions.map((a) => a.kind).filter((k) => ['backup', 'bootout', 'shims', 'envrc'].includes(k)), [])
+})
+
+test('canon: a transforms-only diff plans one config write — global, per-identity and absent alike', () => {
+  const f = fakes()
+  const detected = detect({ home, exec: f.exec, fs, path: `${home}/bin:/usr/bin:/bin`, keychain: f.keychain, shell: '/bin/zsh' })
+  // models pre-seeded from the fixture's picker rows, so seed() is a no-op and only the
+  // transforms fields differ between config and existing
+  const rows = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8')).modelPicker.options
+  const base = next()
+  base.models = seed(load().models, rows, catalog).rules
+  const configs = (actions: Action[]): number => actions.filter((a) => a.kind === 'config').length
+
+  // identical transforms on both sides → no config action from canon
+  assert.equal(configs(plan(detected, answers(base, detected, { existing: base }))), 0)
+
+  // global [transforms] changed / absent on disk → one config action
+  const changed: Config = { ...base, transforms: { rtk: false, caveman: 'ultra' } }
+  assert.equal(configs(plan(detected, answers(changed, detected, { existing: base }))), 1)
+  const missing: Config = { ...base, transforms: undefined }
+  assert.equal(configs(plan(detected, answers(base, detected, { existing: missing }))), 1)
+
+  // per-identity transforms changed → one config action
+  const withPer: Config = {
+    ...base,
+    identities: { ...base.identities, work: { ...base.identities.work!, transforms: { caveman: 'full' } } },
+  }
+  assert.equal(configs(plan(detected, answers(withPer, detected, { existing: base }))), 1)
 })
 
 test('viaNpx: _npx script path or npx user agent', () => {

@@ -4,13 +4,22 @@ import { parse, stringify } from 'smol-toml'
 import { paths, expand, home } from './paths.ts'
 import type { Config, ConfigInput, GraftConfig, Identity, ModelRules } from './types.ts'
 
-export const defaults = { port: 4141, default: 'personal', identities: {}, models: {}, graft: { roots: [], repos: [] }, harness: {} }
+export const defaults = {
+  port: 4141,
+  default: 'personal',
+  identities: {},
+  models: {},
+  graft: { roots: [], repos: [] },
+  harness: {},
+  transforms: { rtk: true, caveman: 'lite' },
+}
 
 type Obj = Record<string, unknown>
 type RawIdentity = Identity & Obj
 
-const known = ['port', 'default', 'identities', 'models', 'graft', 'harness']
-const idKeys = ['claude_config_dir', 'share_from', 'fallback', 'match', 'keychain']
+const known = ['port', 'default', 'identities', 'models', 'graft', 'harness', 'transforms']
+const idKeys = ['claude_config_dir', 'share_from', 'fallback', 'match', 'keychain', 'transforms']
+const CAVEMAN = ['off', 'lite', 'full', 'ultra']
 const modelDefaults = () => ({
   include: [], exclude: [], require: ['tool-use'], max_input_price: null, pin: [], labels: {},
   agents: { astra: 'openai/gpt-6-astra', glm: 'zai/glm-5.3[1m]', deepseek: 'deepseek/deepseek-v4.1-flash[1m]' },
@@ -41,10 +50,21 @@ const strings = (v: unknown): boolean => Array.isArray(v) && v.every((x) => type
 
 const checkIdentity = (file: string, id: string, v: unknown): void => {
   if (!isObj(v)) throw new Error(`config ${file}: identities.${id} must be a table`)
+  checkTransforms(file, `identities.${id}.transforms`, v.transforms)
   if (v.match === undefined) return
   if (!isObj(v.match)) throw new Error(`config ${file}: identities.${id}.match must be a table with remotes = ["github.com/owner/*"] and paths = ["~/Code/**"]`)
   if (v.match.remotes !== undefined && !strings(v.match.remotes)) throw new Error(`config ${file}: identities.${id}.match.remotes must be an array of strings, e.g. ["github.com/owner/*"]`)
   if (v.match.paths !== undefined && !strings(v.match.paths)) throw new Error(`config ${file}: identities.${id}.match.paths must be an array of strings, e.g. ["~/Code/**"]`)
+}
+
+// [transforms] and [identities.<id>.transforms]: rtk = true|false, caveman = "off"|"lite"|"full"|"ultra" (both optional)
+const checkTransforms = (file: string, at: string, v: unknown): void => {
+  if (v === undefined) return
+  if (!isObj(v)) throw new Error(`config ${file}: ${at} must be a table, e.g. [transforms]\nrtk = true\ncaveman = "lite"`)
+  if (v.rtk !== undefined && typeof v.rtk !== 'boolean') throw new Error(`config ${file}: ${at}.rtk must be true or false`)
+  if (v.caveman !== undefined && (typeof v.caveman !== 'string' || !CAVEMAN.includes(v.caveman))) {
+    throw new Error(`config ${file}: ${at}.caveman must be one of: ${CAVEMAN.join(', ')}`)
+  }
 }
 
 const checkKeychain = (file: string, id: string, v: unknown): void => {
@@ -69,6 +89,7 @@ const validate = (config: Config, file: string): void => {
     checkIdentity(file, id, v)
     checkKeychain(file, id, v)
   })
+  checkTransforms(file, 'transforms', config.transforms)
 }
 
 // missing `fallback` = [] ("stop and tell me") — init writes the user's choice; never inject a paid chain

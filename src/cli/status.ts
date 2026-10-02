@@ -3,7 +3,7 @@ import { paths } from '../paths.ts'
 import * as catalog from '../catalog.ts'
 import { check, select } from '../models.ts'
 import { read as readSettings } from '../settings.ts'
-import type { CatalogModel, ClaudeSettings, CommandCtx, Config, FetchJson, StatusData, TierSnapshot } from '../types.ts'
+import type { Caveman, CatalogModel, ClaudeSettings, CommandCtx, Config, FetchJson, StatusData, StatusTransforms, TierSnapshot } from '../types.ts'
 
 export const port = (config: Config | null): number => Number(process.env.BARRITO_PORT ?? config?.port ?? 4141)
 export const base = (config: Config | null): string => `http://127.0.0.1:${port(config)}`
@@ -24,8 +24,8 @@ export const fetchJson = async (url: string, { timeout = 1000, fetch: f = fetch 
   }
 }
 
-// → { status } | null (unreachable)
-export const postJson = async (url: string, body: unknown, { timeout = 1000, fetch: f = fetch }: { timeout?: number; fetch?: FetchJson } = {}): Promise<{ status: number } | null> => {
+// → { status, data? } | null (unreachable); data is the parsed JSON of a 2xx response
+export const postJson = async (url: string, body: unknown, { timeout = 1000, fetch: f = fetch }: { timeout?: number; fetch?: FetchJson } = {}): Promise<{ status: number; data?: unknown } | null> => {
   const ac = new AbortController()
   const timer = setTimeout(() => ac.abort(), timeout)
   const lose = new Promise<null>((done) => ac.signal.addEventListener('abort', () => done(null)))
@@ -39,7 +39,15 @@ export const postJson = async (url: string, body: unknown, { timeout = 1000, fet
       }),
       lose,
     ])
-    return res ? { status: res.status ?? 0 } : null
+    if (!res) return null
+    if (!res.ok) return { status: res.status ?? 0 }
+    let data: unknown
+    try {
+      data = await res.json()
+    } catch {
+      return null
+    }
+    return { status: res.status ?? 200, data }
   } catch {
     return null
   } finally {
@@ -58,17 +66,44 @@ const short = (model: string): string => catalog.bare(model).split('/').pop() ??
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
 
+const CAVEMAN = ['off', 'lite', 'full', 'ultra']
+
 // /status JSON → StatusData; null when it isn't an object
 export const parse = (v: unknown): StatusData | null => {
   if (!isObj(v)) return null
   const spend = Object.fromEntries(Object.entries(isObj(v.spend) ? v.spend : {})
     .flatMap(([id, amount]) => typeof amount === 'number' ? [[id, amount] as const] : []))
+  const transforms = Object.fromEntries(Object.entries(isObj(v.transforms) ? v.transforms : {})
+    .flatMap(([id, t]) => {
+      if (!isObj(t) || !isObj(t.state)) return []
+      const st = t.state
+      const caveman = typeof st.caveman === 'string' && CAVEMAN.includes(st.caveman) ? (st.caveman as Caveman) : 'off'
+      return [[id, {
+        state: { rtk: st.rtk === true, caveman },
+        saved: num(t.saved) ?? 0,
+        compressed: num(t.compressed) ?? 0,
+      }] as [string, StatusTransforms]]
+    }))
   return {
     pid: num(v.pid),
     uptime: num(v.uptime),
     identities: isObj(v.identities) ? v.identities as Record<string, Partial<TierSnapshot>> : {},
     spend,
+    transforms,
+    rtk: v.rtk === true,
   }
+}
+
+export const bytes = (n: number): string =>
+  n < 1024 ? `${n}B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)}kB` : `${(n / 1024 / 1024).toFixed(1)}MB`
+
+// TRANSFORMS cell: rtk · cave:<level> (parts that are off omitted) plus bytes saved today
+export const cellTransforms = (t: StatusTransforms | undefined): string => {
+  if (!t) return '—'
+  const parts = [t.state.rtk ? 'rtk' : '', t.state.caveman !== 'off' ? `cave:${t.state.caveman}` : '']
+    .filter(Boolean)
+  if (t.saved > 0) parts.push(`${bytes(t.saved)} saved`)
+  return parts.length ? parts.join(' · ') : '—'
 }
 
 const ids = (config: { identities?: Record<string, unknown> } | null, data: StatusData | null): string[] => [
@@ -88,11 +123,12 @@ export const table = (config: { identities?: Record<string, unknown> } | null, d
       pct(s?.util5h).padEnd(9),
       pct(s?.util7d).padEnd(9),
       (s?.resetAt ? hhmm(s.resetAt) : '—').padEnd(9),
-      `$${Number(data?.spend?.[id] ?? 0).toFixed(2)}`,
+      `$${Number(data?.spend?.[id] ?? 0).toFixed(2)}`.padEnd(11),
+      cellTransforms(data?.transforms?.[id]),
     ].join('')
   }
   return [
-    `${'IDENTITY'.padEnd(11)}${'TIER'.padEnd(14)}${'MAX 5H'.padEnd(9)}${'MAX 7D'.padEnd(9)}${'RESETS'.padEnd(9)}API TODAY`,
+    `${'IDENTITY'.padEnd(11)}${'TIER'.padEnd(14)}${'MAX 5H'.padEnd(9)}${'MAX 7D'.padEnd(9)}${'RESETS'.padEnd(9)}${'API TODAY'.padEnd(11)}TRANSFORMS`,
     ...ids(config, data).map(row),
   ]
 }
@@ -105,15 +141,15 @@ export const markdown = (config: { identities?: Record<string, unknown> } | null
   const row = (id: string): string => {
     const s = data?.identities?.[id]
     const tier = !s || s.tier === 'max' || s.pin === 'max' ? 'max' : short(s.model ?? '')
-    return `| ${cell(id)} | ${cell(tier)} | ${pct(s?.util5h)} | ${pct(s?.util7d)} | ${s?.resetAt ? hhmm(s.resetAt) : '—'} | $${Number(data?.spend?.[id] ?? 0).toFixed(2)} |`
+    return `| ${cell(id)} | ${cell(tier)} | ${pct(s?.util5h)} | ${pct(s?.util7d)} | ${s?.resetAt ? hhmm(s.resetAt) : '—'} | $${Number(data?.spend?.[id] ?? 0).toFixed(2)} | ${cell(cellTransforms(data?.transforms?.[id]))} |`
   }
   const fell = (id: string): string => {
     const s = data?.identities?.[id]
     return `⚠ ${cell(id)} fell back to ${cell(short(s?.model ?? ''))} (${cell(s?.reason ?? 'fallback')})`
   }
   return [
-    '| Identity | Tier | Max 5h | Max 7d | Resets | API today |',
-    '| --- | --- | --- | --- | --- | --- |',
+    '| Identity | Tier | Max 5h | Max 7d | Resets | API today | Transforms |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
     ...ids(config, data).map(row),
     ...ids(config, data).filter((id) => data?.identities?.[id]?.tier === 'fallback').map(fell),
   ]

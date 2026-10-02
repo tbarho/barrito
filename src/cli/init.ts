@@ -5,6 +5,7 @@ import path from 'node:path'
 import pc from 'picocolors'
 import * as p from '@clack/prompts'
 import type { Option } from '@clack/prompts'
+import { parse as toml } from 'smol-toml'
 import { paths, home, expand, platform, root } from '../paths.ts'
 import { load } from '../config.ts'
 import * as settings from '../settings.ts'
@@ -18,7 +19,7 @@ import { detect, keyringRefs, probe } from '../detect.ts'
 import { create as createBackup } from '../backup.ts'
 import { plan, apply, histories, short } from '../migrate.ts'
 import type { Action, GraftRun, ServiceIo, WriteKeychain } from '../migrate.ts'
-import type { CatalogModel, Config, Ctx, Exec, Fetch, Identity } from '../types.ts'
+import type { CatalogModel, Config, Ctx, Exec, Fetch, Identity, TransformState } from '../types.ts'
 
 const CHAIN = ['zai/glm-5.3', 'deepseek/deepseek-v4.1-flash']
 const FALLBACKS: Record<'cheap' | 'claude' | 'stop', string[]> = {
@@ -60,6 +61,7 @@ type Def = {
   share_from?: string
   match: { remotes: string[]; paths: string[] }
   keychain: { gateway?: string; cursor?: string }
+  transforms?: Partial<TransformState>
 }
 
 const defOf = (id: string, raw: {
@@ -67,11 +69,13 @@ const defOf = (id: string, raw: {
   share_from?: string | null
   match?: { remotes?: string[]; paths?: string[] }
   keychain?: Record<string, string>
+  transforms?: Partial<TransformState>
 }): Def => ({
   claude_config_dir: raw.claude_config_dir ?? `~/.claude-${id}`,
   share_from: raw.share_from ?? undefined,
   match: { remotes: raw.match?.remotes ?? [], paths: raw.match?.paths ?? [] },
   keychain: { gateway: raw.keychain?.gateway ?? '', cursor: raw.keychain?.cursor ?? '' },
+  transforms: raw.transforms,
 })
 
 // a launchd plist needs a path that survives `npm cache clean` — npx runs don't
@@ -232,6 +236,43 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
     })
   }
 
+  // token savers: rtk compression + caveman replies — a config that already has [transforms] wins
+  const hasTransforms = (file: string): boolean => {
+    try {
+      return 'transforms' in (toml(fs.readFileSync(file, 'utf8')) as Record<string, unknown>)
+    } catch {
+      return false
+    }
+  }
+  const rtkInstalled = (exec: Exec): boolean => {
+    try {
+      return exec('which', ['rtk']).trim().length > 0
+    } catch {
+      return false
+    }
+  }
+  const txStep = !hasTransforms(paths.config)
+  let tx: TransformState = current.transforms ?? { rtk: true, caveman: 'lite' }
+  if (txStep) {
+    if (!rtkInstalled(deps.exec)) p.log.warn('rtk not found on PATH — brew install rtk (github.com/rtk-ai/rtk), then re-run barrito init')
+  }
+  if (txStep && !yes) {
+    p.log.step('Token savers')
+    const rtk = await ask('Compress tool output with rtk?', { value: true })
+    tx = {
+      rtk,
+      caveman: await ui.select('How terse should replies be? (caveman)', {
+        initialValue: 'lite',
+        options: [
+          { value: 'off', label: 'off — full replies' },
+          { value: 'lite', label: 'lite — terser replies' },
+          { value: 'full', label: 'full — very terse replies' },
+          { value: 'ultra', label: 'ultra — caveman' },
+        ],
+      }),
+    }
+  }
+
   let share = true
   let historiesAnswer = true
   // no keyring on this machine → identities carry env: refs instead of keyring names
@@ -295,6 +336,7 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
       fallback: FALLBACKS[fallback],
       match: { remotes: def.match.remotes, paths: def.match.paths.map(expand) },
       keychain: refFor(id, def.keychain),
+      ...(def.transforms ? { transforms: def.transforms } : {}),
     }
     return memo
   }, {})
@@ -373,6 +415,7 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
     models: current.models,
     graft: { roots, repos },
     harness: current.harness,
+    transforms: tx,
   }
   let models: CatalogModel[] | null = null
   try {
@@ -383,7 +426,10 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
   // detect read the config before the wizard's identities existed — probe their keyring refs
   // too, so a custom cursor item that already holds a key never re-plans the cursor-keys move
   const keychainState = { ...detected.keychain, ...probe(keyringRefs(identities), deps.keychain) }
-  const actions = plan({ ...detected, keychain: keychainState }, { config: next, existing: current, replace, share, histories: historiesAnswer, ts, bin, fs, catalog: models })
+  // a config without [transforms] must reach plan() transforms-less — load() injects the
+  // defaults, which would hide a first-time [transforms] write from canon's diff
+  const carried: Partial<Config> = txStep ? { ...current, transforms: undefined } : current
+  const actions = plan({ ...detected, keychain: keychainState }, { config: next, existing: carried, replace, share, histories: historiesAnswer, ts, bin, fs, catalog: models })
 
   p.log.step('Plan')
   const sign: Partial<Record<Action['kind'], string>> = { backup: pc.dim('~'), bootout: pc.red('-'), shims: pc.yellow('±'), envrc: pc.red('-'), note: pc.yellow('!') }

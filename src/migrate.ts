@@ -386,6 +386,9 @@ export const plan = (detected: Detected, answers: Answers): Action[] => {
   }
 
   const carried = (answers.existing ?? {}) as Partial<Config>
+  // canon covers [transforms] too (per-identity transforms ride through `identities`), so a
+  // transforms-only diff still plans a config write — callers hand `existing` in as the file
+  // holds it, since load() injects the defaults a missing [transforms] table would hide
   const canon = (c: Partial<Config>): string => stable({
     port: c.port,
     default: c.default,
@@ -393,6 +396,7 @@ export const plan = (detected: Detected, answers: Answers): Action[] => {
     models: c.models,
     graft: c.graft ?? { roots: [], repos: [] },
     harness: c.harness ?? {},
+    transforms: c.transforms ?? null,
   })
   if (canon(next) !== canon(carried)) {
     actions.push({ kind: 'config', description: `write ${short(paths.config)}`, config: next })

@@ -2,7 +2,7 @@ import { StringDecoder } from 'node:string_decoder'
 import { Readable, Transform, pipeline } from 'node:stream'
 import type { ReadableStream as NodeWebReadableStream } from 'node:stream/web'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { LineInfo, Log, Meter, Parsed, RawHeaders, TierSnapshot, UpstreamResponse, Usage } from '../types.ts'
+import type { Applied, LineInfo, Log, Meter, Parsed, RawHeaders, TierSnapshot, Transforms, UpstreamResponse, Usage } from '../types.ts'
 
 const DROP = new Set([
   'host',
@@ -102,6 +102,34 @@ export const parse = (buf: Buffer): Parsed => {
   }
 }
 
+// the buffered body as a JSON object, or null — junk and empty bodies are never transformed
+export const parseJson = (buf: Buffer): Record<string, unknown> | null => {
+  try {
+    const raw: unknown = JSON.parse(buf.toString('utf8'))
+    return typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
+}
+
+// apply the identity's transforms once per request; bytes pass through untouched when nothing applied
+export const transform = (
+  tx: Transforms | undefined,
+  kind: 'anthropic' | 'openai',
+  id: string,
+  raw: Buffer,
+): { out: Buffer; body: Record<string, unknown> | null; applied: Applied | undefined } => {
+  const obj = parseJson(raw)
+  if (!tx || !obj) return { out: raw, body: null, applied: undefined }
+  const r = tx[kind](id, obj)
+  if (r.applied.rtk === 0 && r.applied.caveman === 'off') return { out: raw, body: obj, applied: r.applied }
+  return { out: Buffer.from(JSON.stringify(r.body)), body: r.body, applied: r.applied }
+}
+
+// response header + log suffix formats
+export const transformsHeader = (applied: Applied): string => `rtk=${applied.rtk}; caveman=${applied.caveman}`
+export const transformsLog = (applied: Applied): string => `rtk:${applied.rtk},cave:${applied.caveman}`
+
 export const json = (res: ServerResponse, status: number, obj: unknown): void => {
   res.writeHead(status, { 'content-type': 'application/json' })
   res.end(JSON.stringify(obj))
@@ -110,11 +138,11 @@ export const json = (res: ServerResponse, status: number, obj: unknown): void =>
 export const fail = (res: ServerResponse, status: number, type: string, message: string): void =>
   json(res, status, { type: 'error', error: { type, message } })
 
-export const line = (log: Log, t0: number, { id = '-', method, path, model = '-', to = 'local', reason = '-', status }: LineInfo): void =>
+export const line = (log: Log, t0: number, { id = '-', method, path, model = '-', to = 'local', reason = '-', status, transforms }: LineInfo): void =>
   log(
     `${new Date().toISOString()} ${id} ${method} ${path} ${model || '-'} → ${to} (${reason}) ${status} ${
       Date.now() - t0
-    }ms`,
+    }ms${transforms ? ` t=${transforms}` : ''}`,
   )
 
 const iso = (at: number): string => new Date(at < 1e12 ? at * 1000 : at).toISOString()
@@ -205,13 +233,14 @@ export const meter = (): Meter => {
 export const reply = (
   up: UpstreamResponse,
   res: ServerResponse,
-  { tier, tap, done }: { tier?: string; tap?: (chunk: Buffer) => void; done?: () => void } = {},
+  { tier, transforms, tap, done }: { tier?: string; transforms?: string; tap?: (chunk: Buffer) => void; done?: () => void } = {},
 ): void => {
   const head: Record<string, string> = {}
   up.headers.forEach((value: string, key: string) => {
     if (!DROP_RES.has(key)) head[key] = value
   })
   if (tier) head['x-barrito-tier'] = tier
+  if (transforms) head['x-barrito-transforms'] = transforms
   res.writeHead(up.status, head)
   if (!up.body) {
     done && done()

@@ -44,6 +44,14 @@ then the model picker. Ambiguous or unknown short names exit 2.
 Clear the identity-wide pin; the tier state machine decides again per request.
 
   barrito unpin personal`,
+  set: `usage: barrito set <identity> [rtk on|off] [caveman off|lite|full|ultra] [--reset]
+
+Per-identity token savers. rtk compresses noisy tool output before it hits the
+model (needs the rtk binary); caveman asks the model for terser replies. --reset
+returns the identity to the config defaults.
+
+  barrito set personal rtk on caveman ultra
+  barrito set work --reset`,
   models: `usage: barrito models [sync [--dry-run] [--all] [--json] | search <q> | add <id> | rm <id>]
 
 sync rewrites the Claude Code model picker from the gateway catalog by your

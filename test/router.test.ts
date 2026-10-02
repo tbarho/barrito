@@ -6,6 +6,7 @@ import type { AddressInfo } from 'node:net'
 import { once } from 'node:events'
 import { start } from '../src/router/server.ts'
 import type {
+  Applied,
   Config,
   Identity,
   Keychain,
@@ -17,11 +18,13 @@ import type {
   StartOpts,
   TierSnapshot,
   Tiers,
+  Transforms,
   Upstreams,
   Usage,
 } from '../src/types.ts'
 
 const SERVICE = 'Vercel AI Gateway Work'
+const NO_IDENTITY_MESSAGE = 'barrito: no identity for this request — run barrito doctor'
 
 const config = (): Config => ({
   port: 0,
@@ -104,6 +107,40 @@ const fakeSpend = (): FakeSpend => {
   }
 }
 
+type TxCall = { kind: 'anthropic' | 'openai'; id: string; model: unknown }
+type TxSetCall = { id: string; patch: unknown }
+type FakeTransforms = Transforms & { calls: TxCall[]; sets: TxSetCall[] }
+
+// applies the given Applied to every JSON body, optionally rewriting it; junk/empty bodies never reach it
+const fakeTransforms = (
+  applied: Applied,
+  rewrite?: (body: Record<string, unknown>) => Record<string, unknown>,
+  extras: Partial<Transforms> = {},
+): FakeTransforms => {
+  const calls: TxCall[] = []
+  const sets: TxSetCall[] = []
+  return {
+    calls,
+    sets,
+    state: () => ({ rtk: applied.rtk > 0, caveman: applied.caveman }),
+    set: (id: string, patch: unknown) => {
+      sets.push({ id, patch })
+      return { rtk: true, caveman: 'lite' }
+    },
+    anthropic: (id: string, body: Record<string, unknown>) => {
+      calls.push({ kind: 'anthropic', id, model: body.model })
+      return { body: rewrite ? rewrite(body) : body, applied }
+    },
+    openai: (id: string, body: Record<string, unknown>) => {
+      calls.push({ kind: 'openai', id, model: body.model })
+      return { body: rewrite ? rewrite(body) : body, applied }
+    },
+    available: () => true,
+    stats: () => ({ work: { saved: 0, compressed: 0 } }),
+    ...extras,
+  }
+}
+
 type Entry = {
   method: string | undefined
   url: string | undefined
@@ -113,7 +150,7 @@ type Entry = {
   res: ServerResponse
 }
 
-const parse = (buf: Buffer | undefined): { model?: string } => JSON.parse(String(buf ?? ''))
+const parse = (buf: Buffer | undefined): { model?: string; system?: unknown } => JSON.parse(String(buf ?? ''))
 
 type Json = {
   ok?: boolean
@@ -124,6 +161,9 @@ type Json = {
   identities?: Snap
   spend?: Record<string, number>
   choices?: unknown[]
+  rtk?: boolean
+  state?: { rtk?: boolean; caveman?: string }
+  transforms?: Record<string, { state?: { rtk?: boolean; caveman?: string }; saved?: number; compressed?: number }>
 }
 const json = async (res: Response): Promise<Json> => (await res.json()) as Json
 
@@ -167,6 +207,7 @@ const boot = async ({
   tiers,
   keys,
   spend,
+  transforms,
   upstreams,
   maxBody,
 }: {
@@ -174,6 +215,7 @@ const boot = async ({
   tiers?: FakeTiers
   keys?: FakeKeys
   spend?: FakeSpend
+  transforms?: Transforms
   upstreams?: Upstreams
   maxBody?: number
 }) => {
@@ -188,6 +230,7 @@ const boot = async ({
     spend: spend ?? fakeSpend(),
     keychain: keys ?? fakeKeys({ [SERVICE]: 'gw-key' }),
     log: (line: string) => logs.push(line),
+    transforms,
     maxBody,
     upstreams:
       upstreams ??
@@ -977,6 +1020,162 @@ test('explicit gateway routes bypass tiers: claude-code/*, *-fast, GET /v1/model
     }
     assert.equal(tiers.calls.route.length, 0)
     assert.equal(tiers.calls.observe.length, 0)
+  } finally {
+    await r.stop()
+  }
+})
+
+// ── transforms ─────────────────────────────────────────────────────────────────
+
+test('transforms: applied once per request — retries reuse the same rewritten body', async () => {
+  const tiers = fakeTiers({ route: { to: 'direct' }, retries: [{ retry: { to: 'direct', delay: 0 } }] })
+  const tx = fakeTransforms(
+    { rtk: 2, caveman: 'lite', saved: 512 },
+    (body) => ({ ...body, system: 'caveman says hi' }),
+  )
+  const cap = capture((e) => {
+    if (cap.seen.length === 1) {
+      e.res.writeHead(500, { 'content-type': 'application/json' })
+      e.res.end('{}')
+      return
+    }
+    ok(e, '{"ok":true}')
+  })
+  const r = await boot({ handler: cap.handler, tiers, transforms: tx })
+  try {
+    const res = await call(r.port, '/v1/messages', {
+      body: JSON.stringify({ model: 'claude-sonnet-4.5', max_tokens: 8 }),
+      headers: claudeHeaders,
+    })
+    assert.equal(res.status, 200)
+    assert.equal(tx.calls.length, 1, 'one transform per request, not per hop')
+    assert.equal(cap.seen.length, 2)
+    for (const e of cap.seen) assert.equal(parse(e.body).system, 'caveman says hi')
+    assert.equal(res.headers.get('x-barrito-transforms'), 'rtk=2; caveman=lite')
+    assert.match(r.logs[0] ?? '', / t=rtk:2,cave:lite$/)
+  } finally {
+    await r.stop()
+  }
+})
+
+test('transforms: nothing applied → original bytes forwarded verbatim, header rtk=0;caveman=off', async () => {
+  const tx = fakeTransforms({ rtk: 0, caveman: 'off', saved: 0 })
+  const raw = '{"model":"claude-sonnet-4.5",  "max_tokens":   8}'
+  const cap = capture((e) => ok(e, '{"ok":true}'))
+  const r = await boot({ handler: cap.handler, transforms: tx })
+  try {
+    const res = await call(r.port, '/v1/messages', { body: raw, headers: claudeHeaders })
+    assert.equal(res.status, 200)
+    assert.equal(tx.calls.length, 1)
+    assert.equal(cap.seen[0]?.body.toString(), raw, 'byte-for-byte, no re-serialization')
+    assert.equal(res.headers.get('x-barrito-transforms'), 'rtk=0; caveman=off')
+    assert.match(r.logs[0] ?? '', / t=rtk:0,cave:off$/)
+  } finally {
+    await r.stop()
+  }
+})
+
+test('transforms: junk bodies never reach the transform — bytes verbatim', async () => {
+  const tx = fakeTransforms({ rtk: 3, caveman: 'ultra', saved: 10 }, (body) => ({ ...body, system: 'x' }))
+  const cap = capture((e) => ok(e, '{"ok":true}'))
+  const r = await boot({ handler: cap.handler, transforms: tx })
+  try {
+    const res = await call(r.port, '/v1/messages', { body: 'not-json{{', headers: claudeHeaders })
+    assert.equal(res.status, 200)
+    assert.equal(tx.calls.length, 0)
+    assert.equal(cap.seen[0]?.body.toString(), 'not-json{{')
+  } finally {
+    await r.stop()
+  }
+})
+
+test('gateway proxy: chat/completions → openai, messages → anthropic, other paths untouched', async () => {
+  const tx = fakeTransforms({ rtk: 1, caveman: 'full', saved: 64 }, (body) => ({ ...body, system: 'terse' }))
+  const cap = capture((e) => ok(e, '{"ok":true}'))
+  const r = await boot({ handler: cap.handler, transforms: tx })
+  try {
+    const gw = { 'content-type': 'application/json', authorization: 'Bearer barrito:work' }
+    const completions = await call(r.port, '/gateway/v1/chat/completions', { body: '{"model":"openai/gpt-6"}', headers: gw })
+    assert.equal(completions.status, 200)
+    assert.equal(parse(cap.seen[0]?.body).system, 'terse')
+    assert.equal(completions.headers.get('x-barrito-transforms'), 'rtk=1; caveman=full')
+    assert.match(r.logs[0] ?? '', / t=rtk:1,cave:full$/)
+
+    const messages = await call(r.port, '/gateway/v1/messages', { body: '{"model":"anthropic/claude-opus-4.5"}', headers: gw })
+    assert.equal(messages.status, 200)
+    assert.equal(parse(cap.seen[1]?.body).system, 'terse')
+    assert.deepEqual(tx.calls.map((c) => c.kind), ['openai', 'anthropic'])
+
+    // other proxy paths (models, embeddings) pass through untouched
+    const raw = '{"model":"openai/gpt-6",  "weird":  true}'
+    const untouched = await call(r.port, '/gateway/v1/embeddings', { body: raw, headers: gw })
+    assert.equal(untouched.status, 200)
+    assert.equal(cap.seen[2]?.body.toString(), raw)
+    assert.equal(untouched.headers.get('x-barrito-transforms'), 'rtk=0; caveman=off')
+    assert.equal(tx.calls.length, 2)
+  } finally {
+    await r.stop()
+  }
+})
+
+test('gateway proxy: non-JSON content-type bodies are never transformed', async () => {
+  const tx = fakeTransforms({ rtk: 1, caveman: 'full', saved: 64 }, (body) => ({ ...body, system: 'terse' }))
+  const raw = '{"model":"openai/gpt-6"}'
+  const cap = capture((e) => ok(e, '{"ok":true}'))
+  const r = await boot({ handler: cap.handler, transforms: tx })
+  try {
+    const res = await call(r.port, '/gateway/v1/chat/completions', {
+      body: raw,
+      headers: { 'content-type': 'text/plain', authorization: 'Bearer barrito:work' },
+    })
+    assert.equal(res.status, 200)
+    assert.equal(tx.calls.length, 0)
+    assert.equal(cap.seen[0]?.body.toString(), raw)
+  } finally {
+    await r.stop()
+  }
+})
+
+test('POST /transforms sets state; invalid values and unknown identities 400', async (t) => {
+  const tx = fakeTransforms({ rtk: 0, caveman: 'off', saved: 0 }, undefined, {
+    set: (id: string, patch: unknown) => {
+      if ((patch as { caveman?: unknown } | null)?.caveman === 'nope') throw new Error('barrito: caveman must be off|lite|full|ultra, got "nope"')
+      return { rtk: true, caveman: 'ultra' }
+    },
+  })
+  const cap = capture((e) => ok(e))
+  const r = await boot({ handler: cap.handler, transforms: tx })
+  t.after(() => r.stop())
+  const good = await call(r.port, '/transforms', { body: JSON.stringify({ identity: 'work', rtk: true, caveman: 'ultra' }) })
+  assert.equal(good.status, 200)
+  assert.deepEqual(await good.json(), { ok: true, state: { rtk: true, caveman: 'ultra' } })
+
+  const reset = await call(r.port, '/transforms', { body: JSON.stringify({ identity: 'work', reset: true }) })
+  assert.equal(reset.status, 200)
+
+  const bad = await call(r.port, '/transforms', { body: JSON.stringify({ identity: 'work', caveman: 'nope' }) })
+  assert.equal(bad.status, 400)
+  assert.equal((await json(bad)).error?.message, 'barrito: caveman must be off|lite|full|ultra, got "nope"')
+
+  const ghost = await call(r.port, '/transforms', { body: JSON.stringify({ identity: 'ghost', caveman: 'lite' }) })
+  assert.equal(ghost.status, 400)
+  assert.equal((await json(ghost)).error?.message, NO_IDENTITY_MESSAGE)
+})
+
+test('GET /status carries transforms state, saved-today stats and rtk availability', async () => {
+  const tx = fakeTransforms({ rtk: 0, caveman: 'off', saved: 0 }, undefined, {
+    state: () => ({ rtk: true, caveman: 'ultra' }),
+    stats: () => ({ work: { saved: 4096, compressed: 3 } }),
+  })
+  const cap = capture((e) => ok(e))
+  const r = await boot({ handler: cap.handler, transforms: tx })
+  try {
+    const res = await call(r.port, '/status', { method: 'GET' })
+    const body = await json(res)
+    assert.equal(body.rtk, true)
+    assert.deepEqual(body.transforms, {
+      work: { state: { rtk: true, caveman: 'ultra' }, saved: 4096, compressed: 3 },
+    })
   } finally {
     await r.stop()
   }

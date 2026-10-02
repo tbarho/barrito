@@ -36,7 +36,7 @@ agent            claude · codex · opencode · cursor-agent · your own
   │
   ▼
 router           127.0.0.1:4141
-  ├─ Claude model, tier = max        →  api.anthropic.com              (direct, Max OAuth, unchanged)
+  ├─ Claude model, tier = max        →  api.anthropic.com              (direct, Max OAuth)
   ├─ Claude model, spent or pinned   →  ai-gateway.vercel.sh/claude-code (identity key)
   └─ /gateway/*                      →  ai-gateway.vercel.sh            (identity key)
 ```
@@ -55,7 +55,7 @@ Results are cached per git toplevel + remote URL in the state dir's `which.json`
 | Level | Harnesses | Mechanism |
 | --- | --- | --- |
 | Full | Claude Code | `ANTHROPIC_BASE_URL=http://127.0.0.1:4141`, `CLAUDE_CONFIG_DIR` per identity (switches the Max login), `ANTHROPIC_CUSTOM_HEADERS=x-barrito-identity: <id>`. The router runs the tier state machine. |
-| Gateway | Codex, OpenCode, custom scripts, AI SDK apps | Base URL → `http://127.0.0.1:4141/gateway`, API key = handle `barrito:<id>`. The router swaps the handle for the identity's Vercel key and reverse-proxies unchanged. No format translation. |
+| Gateway | Codex, OpenCode, custom scripts, AI SDK apps | Base URL → `http://127.0.0.1:4141/gateway`, API key = handle `barrito:<id>`. The router swaps the handle for the identity's Vercel key and reverse-proxies the request. No format translation. |
 | Env | cursor-agent | Cursor's backend can't be proxied. The shim injects `CURSOR_API_KEY` from the secret store plus `AGENT_CLI_CREDENTIAL_STORE=file`. |
 
 Built-ins ship in the package and are overridable in config. A custom harness:
@@ -79,7 +79,6 @@ Cheap first, loudly. A per-identity state machine (persisted to the state dir's 
 - **Quota:** a direct 429 moves the identity to `fallback(quota)` until the reset timestamp from Anthropic's rate-limit headers; the next request after that probes direct again. A 429 whose status headers still say `allowed` is a blip — one free direct retry.
 - **Outage:** a direct 529/5xx/connect error earns one free direct retry; a second within 60s opens the breaker, which half-opens after 60s and backs off ×2 up to 15m.
 - The triggering error arrives before any stream bytes, so the same request is retried on the fallback chain immediately. You see an answer, not an error. If every chain entry fails, you get an Anthropic-shaped error listing each hop.
-- Model output is never mutated.
 
 Loud on every transition, silent otherwise:
 
@@ -99,6 +98,26 @@ header         x-barrito-tier: fallback:glm-5.3; reason=quota; reset=2026-10-01T
 | Never fall back; show the quota error | `barrito pin work max` | Every session of that identity |
 
 When Max runs out mid-session the `/model` label still says Opus — barrito can't change Claude Code's selection — so the statusline is the source of truth. Pins apply on the next API call, including inside a running turn.
+
+## Token savers
+
+Two transforms run inside the router, so every harness gets them — Claude Code, Codex, OpenCode, custom — with zero per-tool setup. Both are one command from off.
+
+- **RTK** compresses noisy tool output (git diffs, listings, grep, test and build logs) through your installed `rtk` before it reaches the model. Each output is compressed once and cached, so prompt caching stays intact. Requires `rtk` on PATH — `doctor` warns when it's on but missing. Default on.
+- **Caveman** trims reply prose — `off · lite · full · ultra`. Code, commands and errors stay verbatim. Default `lite`.
+
+```toml
+[transforms]
+rtk = true
+caveman = "lite"
+
+[identities.personal.transforms]
+caveman = "ultra"
+```
+
+Set them per identity — `barrito set work caveman ultra`, `barrito set personal rtk off`, `barrito set work --reset` (back to the config defaults) — or from inside Claude Code: `/barrito rtk on`, `/barrito caveman ultra`, which target the session's identity (`$BARRITO_IDENTITY`). The statusline shows what's active (`work · Max 62% · rtk · cave:lite`) and `barrito status` shows tokens saved today.
+
+RTK is its authors' tool — barrito just pipes through it.
 
 ## Models
 
@@ -149,6 +168,7 @@ Every command answers `--help` before doing anything. The CLI also answers `--ve
 | `barrito doctor [--json]` | PATH order, shims, service health, logins, secret refs, catalog drift, host restarts needed. Non-zero exit on any ✗. |
 | `barrito pin <identity> <max\|model>` | Identity-wide default for every session. `max` never falls back. A model can be a full gateway id or a short suffix (`glm-5.3`); short names resolve against the cached catalog, preferring the identity's fallback chain, then the picker. Ambiguous or unknown names exit 2. |
 | `barrito unpin <identity>` | Clear the pin; the tier state machine decides again per request. |
+| `barrito set <identity> [rtk on\|off] [caveman off\|lite\|full\|ultra] [--reset]` | Token savers for one identity. `rtk on/off`, `caveman off/lite/full/ultra`; `--reset` returns the identity to the config defaults (`[transforms]` + `[identities.<id>.transforms]`). |
 | `barrito models [sync\|search\|add\|rm]` | Show the picker; sync from the catalog (`--dry-run`, `--all`, `--json`); search with prices (no write); pin or drop one. |
 | `barrito graft [add\|rm\|build] [path]` | Repo checklist, wire and build graphs. `--json` lists configured repos. |
 | `barrito shim [harness…] [--dir <path>] [--force]` | (Re)generate shims; every known harness with no arguments. |
@@ -160,7 +180,7 @@ Every command answers `--help` before doing anything. The CLI also answers `--ve
 | `barrito ci [--identity …] [--gateway-key env:…] [--fallback …] [--port …] [--config <file>]` / `barrito ci stop` | GitHub Actions setup/teardown. `ci` writes shims + router env, starts the router detached and waits for `/health`; `stop` writes the step summary and tears down. See below. |
 | `barrito statusline [--append <command>]` | Claude Code statusline hook: identity, tier, Max usage, API spend and reset in one line. Never throws; `--append` runs another statusline first. |
 | `barrito uninstall [--restore] [--yes]` | Remove the service, shims and settings fragments; `--restore` puts the backed-up setup back. |
-| `/barrito [status\|pin\|unpin]` | Slash command inside Claude Code. |
+| `/barrito [status\|pin <model>\|unpin\|rtk on\|off\|caveman <level>]` | Slash command inside Claude Code, scoped to the session's identity (`$BARRITO_IDENTITY`) — also toggles token savers: `/barrito caveman ultra`, `/barrito rtk off`. |
 
 ## Platforms
 
@@ -203,7 +223,7 @@ No secrets in the config file either way. The router reads them itself and agent
 
 Tier changes surface as GitHub annotations (`::warning` when Max is spent, `::notice` when it's back). Without `CLAUDE_CODE_OAUTH_TOKEN` the job still runs — on the gateway chain only — and `ci` prints a notice saying so.
 
-Compliance is unchanged in CI: Max only ever flows through genuine Claude Code using `CLAUDE_CODE_OAUTH_TOKEN`. Every other tool stays on the repo's gateway key.
+Compliance holds in CI: Max only ever flows through genuine Claude Code using `CLAUDE_CODE_OAUTH_TOKEN`. Every other tool stays on the repo's gateway key.
 
 ## Configuration
 
@@ -239,7 +259,7 @@ Keychain slots accept any ref form above; `init` writes `env:` refs automaticall
 
 ## Compliant by design
 
-- Max OAuth only ever originates from genuine Claude Code → Anthropic direct. The router forwards those requests unchanged except stripping barrito's own headers, so Anthropic sees normal Claude Code traffic.
+- Max OAuth only ever originates from genuine Claude Code → Anthropic direct.
 - Non-Claude-Code tools never touch Max → gateway keys only.
 - Fallback = a different provider on your paid gateway key, not another subscription.
 

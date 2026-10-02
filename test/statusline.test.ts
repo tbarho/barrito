@@ -167,3 +167,36 @@ test('--append with a failing command prints ours alone', async () => {
   })
   assert.deepEqual(out, ['work · Max 62%'])
 })
+
+// ── transforms suffix ─────────────────────────────────────────────────────────
+
+test('statusline appends rtk · cave:<level> to the max-tier line', async () => {
+  const data = {
+    identities: { work: { tier: 'max', util5h: 0.62 } },
+    spend: {},
+    transforms: { work: { state: { rtk: true, caveman: 'ultra' }, saved: 4096, compressed: 2 } },
+  }
+  const out = await run([], JSON.stringify({ cwd: 'work' }), ok(data))
+  assert.deepEqual(out, ['work · Max 62% · rtk · cave:ultra'])
+})
+
+test('statusline appends the suffix to the fallback-tier line too, omitting off parts', async () => {
+  const resetAt = new Date(2026, 9, 1, 14, 5).getTime()
+  const data = {
+    identities: { personal: { tier: 'fallback', model: 'zai/glm-5.3', resetAt } },
+    spend: { personal: 1.84 },
+    transforms: { personal: { state: { rtk: false, caveman: 'lite' }, saved: 0, compressed: 0 } },
+  }
+  const out = await run([], JSON.stringify({ cwd: 'personal' }), ok(data))
+  assert.deepEqual(out, ['personal · ⚠ GLM 5.3 · API $ · Max ↺ 14:05 · cave:lite'])
+})
+
+test('statusline omits the suffix when everything is off', async () => {
+  const data = {
+    identities: { work: { tier: 'max', util5h: 0.62 } },
+    spend: {},
+    transforms: { work: { state: { rtk: false, caveman: 'off' }, saved: 0, compressed: 0 } },
+  }
+  const out = await run([], JSON.stringify({ cwd: 'work' }), ok(data))
+  assert.deepEqual(out, ['work · Max 62%'])
+})

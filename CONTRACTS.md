@@ -40,7 +40,7 @@ Every member of `paths` is a lazy getter, so tests can set `BARRITO_*` after imp
 ```ts
 export const load = (file = paths.config) => Config & { warnings: string[] }  // parse TOML, merge defaults, validate, expand ~, collect unknown-key warnings
 export const save = (config: ConfigInput, file = paths.config) => void       // write TOML atomically (tmp + rename); collapses ~ back
-export const defaults = { port: 4141, default: 'personal', identities: {}, models: {}, graft: { roots: [], repos: [] }, harness: {} }
+export const defaults = { port: 4141, default: 'personal', identities: {}, models: {}, graft: { roots: [], repos: [] }, harness: {}, transforms: { rtk: true, caveman: 'lite' } }
 ```
 
 Resolved config shape (what `load` returns) — `keychain` slots accept any ref form (a plain keyring name, `env:VAR`, `file:/path`):
@@ -57,8 +57,10 @@ Resolved config shape (what `load` returns) — `keychain` slots accept any ref 
       fallback: [],                        // missing = "stop and tell me"; init writes the user's choice, never a paid chain
       match: { remotes: ['github.com/acme/*'], paths: ['/Users/x/Code/acme/**'] },
       keychain: { gateway: 'Vercel AI Gateway Work', cursor: 'Cursor Work' },  // 'env:VAR' and 'file:/path' allowed
+      transforms: { rtk: true, caveman: 'lite' },   // optional per-identity token-saver overrides (partial; see src/router/transforms.ts)
     },
   },
+  transforms: { rtk: true, caveman: 'lite' },  // [transforms] — merged from defaults when the table is absent
   models: {
     include: [], exclude: [], require: ['tool-use'], max_input_price: null, pin: [], labels: {},
     suffix: {},                            // optional per-model '[1m]' override
@@ -182,17 +184,44 @@ State persists to `<statePath>/tiers.json` (tmp + rename); garbage entries drop,
 
 `src/router/spend.ts` (owner: B): `export const create = ({ prices, statePath, now }) => Spend` with `spend.record(identityId, model, usage) → usd` and `spend.today() → { [id]: usd }` (per-day buckets in `<statePath>/spend.json`; a corrupt file is set aside). `prices(modelId) → { input, output, input_cache_read } | null` per-token USD numbers.
 
+## `src/router/transforms.ts` (owner: A)
+
+```ts
+export type Caveman = 'off' | 'lite' | 'full' | 'ultra'
+export interface TransformState { rtk: boolean; caveman: Caveman }
+export interface Applied { rtk: number; caveman: Caveman; saved: number }  // rtk = tool_results compressed, saved = bytes
+export type TransformExec = (args: string[], input: string, timeoutMs: number) => string | null
+
+export const create = (o: { defaults: (identityId: string) => TransformState, statePath: string, exec?: TransformExec, rtkPath?: string | null, now?: () => number }): Transforms
+// Transforms = {
+//   state(id): TransformState                                             // override ?? defaults(id)
+//   set(id, patch: Partial<TransformState> | null): TransformState        // null = reset to config defaults; throws on a bad caveman/rtk
+//   anthropic(id, body: Record<string, unknown>): { body, applied }       // structuredClone — the caller's body is never mutated
+//   openai(id, body: Record<string, unknown>): { body, applied }
+//   available(): boolean                                                  // `rtk` binary on PATH (injected exec/rtkPath short-circuits the probe)
+//   stats(): Record<id, { saved: number; compressed: number }>             // today's bucket only
+// }
+```
+
+Optional, toggleable token savers applied to request bodies. Config: `[transforms]` (defaults `rtk = true`, `caveman = "lite"`, both keys optional) plus per-identity `[identities.<id>.transforms]` partial overrides. `serve` resolves them per identity via `transformDefaults(config)` and wires `transforms.create({ defaults, statePath })` into `start()` as `StartOpts.transforms` (absent → transforms off, `/transforms` 404s).
+
+- **rtk** compresses noisy `tool_result` content through the user's `rtk` binary. Each assistant `tool_use` with a string `input.command` is mapped by `rtk rewrite <command>` to one of rtk 0.49's fixed `rtk pipe --filter` names (cargo-test, pytest, go-test, tsc, git-diff, git-log, grep, rg, find, …); the paired tool_result then goes through `rtk pipe --filter <name>`. Content is left raw when it is under a 1.5 KB floor, has no known command, already carries rtk's own filter markers (`[+N lines omitted]`, `N matches in M files:`, git-diff summary tails, …), or the pipe times out (300 ms), errors, or doesn't shrink it. `rtk rewrite` exits 3 on success, so stdout is the truth, not the exit code. Both `rewrite` answers and piped outputs sit in insertion-ordered LRU Maps (2000 entries; the pipe cache keys sha256 of `filter\0content`), so identical bytes are never re-compressed. Anthropic shape: string tool_results, or content arrays with exactly one text part (multi-text arrays are left alone); OpenAI shape: `tool_calls[].function.arguments` (JSON-parsed) paired with `role:"tool"` messages.
+- **caveman** appends `templates/caveman/<level>.md` (read once per level and cached; a missing template is a no-op) as a system suffix — Anthropic: appended to `body.system` (string concat; pushed as a `{type:'text'}` block onto an array so existing `cache_control` blocks stay put; set when absent); OpenAI: appended to the first `system`/`developer` message's content, unshifted when there is none.
+- Persistence `<statePath>/transforms.json` (tmp + rename): `{ overrides: { [id]: TransformState }, days: { [yyyy-mm-dd]: { [id]: { saved, compressed } } } }` — a corrupt file is set aside as `transforms.json.bad-<ts>`; the day bucket rolls over at local midnight, keeping only today's.
+
 ## `src/router/server.ts` + `routes.ts` + `gateway.ts` (owner: A)
 
 ```ts
 export const start = (opts: StartOpts): http.Server
-// StartOpts = { config: RouterConfig, port, tiers: RouterTiers, spend, keychain, log, upstreams, maxBody? }
+// StartOpts = { config: RouterConfig, port, tiers: RouterTiers, spend, keychain, log, upstreams, transforms?, maxBody? }
 // RouterTiers = Tiers whose snapshot may return partial entries (full Tiers is assignable)
 ```
 
-Routes: `GET /health` → `{ ok: true }` · `GET /status` → `{ pid, uptime, identities: tiers.snapshot(), spend: spend.today() }` · `POST /pin` `{ identity, value }` → `tiers.pin` · `/gateway/*` with `Authorization: Bearer barrito:<id>` → reverse proxy to `<gateway>/*` with the identity key (handle swapped; unknown handle → 401 Anthropic-shaped) · everything else is the Claude path, identity from the `x-barrito-identity` header. Unknown/missing identity → 400 `barrito: no identity for this request — run barrito doctor`.
+Routes: `GET /health` → `{ ok: true }` · `GET /status` → `{ pid, uptime, identities: tiers.snapshot(), spend: spend.today(), transforms: { [id]: { state, saved, compressed } }, rtk: boolean }` · `POST /pin` `{ identity, value }` → `tiers.pin` · `POST /transforms` `{ identity, rtk?, caveman?, reset? }` → `transforms.set` → `{ ok, state }` (unknown identity 400; no `transforms` wired 404; a bad caveman/rtk 400 with `set`'s message) · `/gateway/*` with `Authorization: Bearer barrito:<id>` → reverse proxy to `<gateway>/*` with the identity key (handle swapped; unknown handle → 401 Anthropic-shaped) · everything else is the Claude path, identity from the `x-barrito-identity` header. Unknown/missing identity → 400 `barrito: no identity for this request — run barrito doctor`.
 
 Claude Code gateway hops go to `<gateway>/claude-code` with body model `claude-code/<model>`. Direct hops strip `x-barrito-*` and `x-ai-gateway-api-key`; gateway hops strip `authorization` and set `x-ai-gateway-api-key: Bearer <key>`. Retry the same buffered body on `{ retry }` from `tiers.observe` (only possible before any response bytes were written). Gateway keys per identity via `keychain.get(identity.keychain.gateway)`, cached in memory, busted and re-read once on an upstream 401. Set response header `x-barrito-tier: max` | `fallback:<model>; reason=<r>; reset=<iso>` | `pinned:<model>`. Tee SSE/JSON to extract `usage` (OpenAI names mapped) and call `spend.record`. Log one line per request to `log(line)`: `<iso> <id> <method> <path> <model> → <to> (<reason>) <status> <ms>ms` — never headers or bodies.
+
+Transforms (`StartOpts.transforms`) are applied once per request via `routes.transform()` (`transform(tx, 'anthropic'|'openai', id, raw)` — junk/empty bodies pass through untouched): the Claude path applies the anthropic shape to the buffered body before the hop loop, `/gateway/*` applies the openai shape to `*/chat/completions` and the anthropic shape to `*/messages` (JSON bodies only). Because `transforms.anthropic/openai` work on a `structuredClone`, retries reuse the same rewritten bytes and the caller's body is never mutated. Responses carry `x-barrito-transforms: rtk=<n>; caveman=<level>` and the log line gains a ` t=rtk:<n>,cave:<level>` suffix. `GET /status` lists every configured identity plus any with saved-today stats.
 
 ## `src/catalog.ts` (owner: E)
 
@@ -246,17 +275,19 @@ Commands other than `init` are `src/cli/<name>.ts` exporting `default async (arg
 - C: `which`, `env`, `exec`, `shim`
 - E: `models`
 - F: `graft`
-- G: `status`, `doctor`, `pin`, `unpin`, `logs`, `serve`, `stop`, `ci`, `statusline`, `uninstall`, slash command `templates/barrito-command.md`
+- G: `status`, `doctor`, `pin`, `unpin`, `set`, `logs`, `serve`, `stop`, `ci`, `statusline`, `uninstall`, slash command `templates/barrito-command.md`
 - H: `init`
 
 Exports the tests script against:
 
 - `serve`: `startDetached(o: DetachOpts) → { pid, port, existing }`, `stopDetached(o: StopOpts) → boolean`. Pidfile `<statePath>/barrito.pid` (JSON `{ pid, port, startedAt, token }`); only a pid proven via `GET /status` answering with that pid is ever signalled (SIGTERM ≤3s, SIGKILL, drop the pidfile); stale or foreign pidfiles are cleaned, never signalled. `DetachOpts.env` merges extra env into the child (how `ci` points the router at RUNNER_TEMP).
 - `shim`: `writeShims({ config, harnesses, dir, force, bin, node, print }) → { written: string[], refused: string[] }` — refuses files not generated by barrito unless `force`; aliases become symlinks; 0o755. `ShimCtx = CommandCtx & { bin?, node? }`.
-- `status`: `port`, `base`, `fetchJson`, `postJson` (abort-raced), `parse`, `table`, `markdown` (GFM cells escape pipes and backticks, newlines collapse to spaces; appends a ⚠ line per fallback identity), `nudges`.
-- `doctor`: `diagnose(config, opts) → DoctorCheck[]` — a `GITHUB_ACTIONS` branch (PATH/shims, `BARRITO_PORT`, `BARRITO_IDENTITY`, `/health`, env:/file: readability), linux bits (linger, rc PATH line, keyring availability), host staleness (emdash/conductor started before the shims install).
+- `status`: `port`, `base`, `fetchJson`, `postJson` (abort-raced), `parse`, `table`, `markdown` (GFM cells escape pipes and backticks, newlines collapse to spaces; appends a ⚠ line per fallback identity), `nudges`. `parse` also reads `/status`'s `transforms` + `rtk`; the tables gain a TRANSFORMS column (`cellTransforms`: `rtk · cave:<level> · <bytes> saved`, `—` when nothing is on).
+- `set`: `barrito set <identity> [rtk on|off] [caveman off|lite|full|ultra] [--reset]` — identity required (exit 2 on a unknown one); posts `{ identity, rtk?, caveman?, reset? }` to `/transforms` and renders the answered state (`<id> → rtk on|off · caveman <level>`). `--reset` drops the override (config defaults apply again).
+- `doctor`: `diagnose(config, opts) → DoctorCheck[]` — a `GITHUB_ACTIONS` branch (PATH/shims, `BARRITO_PORT`, `BARRITO_IDENTITY`, `/health`, env:/file: readability), linux bits (linger, rc PATH line, keyring availability), host staleness (emdash/conductor started before the shims install), and a warn when rtk is enabled (identity override ?? `[transforms]` ?? defaults) but the binary is missing from PATH.
+- `statusline`: appends the token-saver tail (` · rtk · cave:<level>`, off parts omitted) from `/status`'s `transforms` after the identity/tier/usage line.
 - `ci`: `flags(argv)` (identity/gateway-key/fallback/port/config/stop), `build(flags) → ConfigInput` (gateway keys must be `env:`/`file:` — CI has no keyring), `envLines`. Writes `$GITHUB_PATH`/`$GITHUB_ENV` with newline guards (nothing is written before every check passes), starts the router detached under `$RUNNER_TEMP`, waits for `/health`, prints a `::notice` when `CLAUDE_CODE_OAUTH_TOKEN` is absent. `ci stop` writes `status --markdown` to `$GITHUB_STEP_SUMMARY` and tears down — warnings only, never a failed job.
-- `init`: `Prompts` (injectable), `Io` (the outside world), `viaNpx(script, env)`. `--yes` takes every default; `--dry-run` writes nothing (cold catalog fetch goes through a no-write fs). Identities loop on "Add another identity?"; no keyring → `env:` refs; PATH block written via `src/detect.ts` `rcOf` (zsh/bash/fish), wrapped in `# >>> barrito >>>` markers that `uninstall` removes whole.
+- `init`: `Prompts` (injectable), `Io` (the outside world), `viaNpx(script, env)`. `--yes` takes every default; `--dry-run` writes nothing (cold catalog fetch goes through a no-write fs). Identities loop on "Add another identity?"; no keyring → `env:` refs; PATH block written via `src/detect.ts` `rcOf` (zsh/bash/fish), wrapped in `# >>> barrito >>>` markers that `uninstall` removes whole. The token-savers step (rtk + caveman prompts, defaults `rtk` on / `caveman` lite) runs only when the config file has no `[transforms]` table — existing values win; `plan()` (src/migrate.ts) diffs `transforms` in its canon (global table and per-identity, via `identities`), so a missing table plans its own config write — `load()` injects the defaults, so init hands `existing` to `plan()` as the file holds it.
 
 `templates/shim.sh` (owner: C) — `__BARRITO__` bakes absolute node + barrito paths at generation time, `__HARNESS__` the harness name:
 

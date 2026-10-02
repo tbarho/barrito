@@ -1,0 +1,5 @@
+commit 1fbafc4771d2f62facac0044e5f297b03230b834
+  Author: Ty Barho <t.barho@gmail.com>
+  Date:   Fri Oct 2 11:59:21 2026 -0500
+  fix: init read package.json via root() so it runs from dist; smoke runs every...
+  [+32 lines omitted]

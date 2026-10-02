@@ -44,12 +44,14 @@ test('missing file → defaults, no throw', () => {
     astra: 'openai/gpt-6-astra', glm: 'zai/glm-5.3[1m]', deepseek: 'deepseek/deepseek-v4.1-flash[1m]',
   })
   assert.deepEqual(config.graft.roots, [])
+  assert.deepEqual(config.transforms, { rtk: true, caveman: 'lite' })
   assert.deepEqual(config.warnings, [])
 })
 
 test('defaults export matches contract', () => {
   assert.deepEqual(defaults, {
     port: 4141, default: 'personal', identities: {}, models: {}, graft: { roots: [], repos: [] }, harness: {},
+    transforms: { rtk: true, caveman: 'lite' },
   })
 })
 
@@ -188,6 +190,7 @@ test('save → load round-trip collapses home, drops id/warnings/nulls, atomic',
     },
     graft: { roots: [path.join(tmp, 'Code')], repos: [{ path: path.join(tmp, 'Code/acme/api'), summaries: false }] },
     harness: { mybot: { bin: 'mybot', env: { OPENAI_BASE_URL: '{gateway}/v1' } } },
+    transforms: { rtk: true, caveman: 'lite' },
     warnings: [],
   }
   assert.deepEqual(back, expected)
@@ -211,4 +214,51 @@ test('save creates nested dirs and load defaults never mutate', () => {
   save({ port: 4141, default: 'personal', identities: {}, models: {}, graft: { roots: [], repos: [] }, harness: {} }, path.join(tmp, 'a/b/config.toml'))
   assert.equal(JSON.stringify(defaults), before)
   assert.equal(existsSync(path.join(tmp, 'a/b/config.toml')), true)
+})
+
+// ── transforms ────────────────────────────────────────────────────────────────
+
+test('transforms: global defaults merge, per-identity overrides stay partial', () => {
+  writeFileSync(file(), `default = "work"
+
+[transforms]
+rtk = false
+caveman = "ultra"
+
+[identities.work]
+claude_config_dir = "~/.claude"
+
+[identities.work.transforms]
+caveman = "full"
+`)
+  const config = load(file())
+  assert.deepEqual(config.transforms, { rtk: false, caveman: 'ultra' })
+  assert.deepEqual(config.identities.work!.transforms, { caveman: 'full' })
+})
+
+test('transforms: invalid values throw', () => {
+  writeFileSync(file(), '[transforms]\ncaveman = "medium"\n')
+  assert.throws(() => load(file()), /transforms\.caveman must be one of: off, lite, full, ultra/)
+  writeFileSync(file(), '[transforms]\nrtk = "yes"\n')
+  assert.throws(() => load(file()), /transforms\.rtk must be true or false/)
+  writeFileSync(file(), 'default = "work"\n\n[identities.work]\nclaude_config_dir = "~/.claude"\n\n[identities.work.transforms]\nrtk = 1\n')
+  assert.throws(() => load(file()), /identities\.work\.transforms\.rtk must be true or false/)
+  writeFileSync(file(), 'default = "work"\n\n[transforms]\ncaveman = "ultra"\n\n[identities.work]\nclaude_config_dir = "~/.claude"\n\n[identities.work.transforms]\ncaveman = "nope"\n')
+  assert.throws(() => load(file()), /identities\.work\.transforms\.caveman must be one of: off, lite, full, ultra/)
+})
+
+test('transforms: save round-trips the global table and per-identity overrides', () => {
+  save({
+    port: 4141,
+    default: 'work',
+    identities: { work: { claude_config_dir: path.join(tmp, '.claude'), transforms: { rtk: false, caveman: 'full' } } },
+    transforms: { rtk: false, caveman: 'ultra' },
+  }, file())
+  const toml = readFileSync(file(), 'utf8')
+  assert.match(toml, /\[transforms\]/)
+  assert.match(toml, /caveman = "ultra"/)
+  assert.match(toml, /\[identities\.work\.transforms\]/)
+  const back = load(file())
+  assert.deepEqual(back.transforms, { rtk: false, caveman: 'ultra' })
+  assert.deepEqual(back.identities.work!.transforms, { rtk: false, caveman: 'full' })
 })

@@ -1,0 +1,56 @@
+commit 1fbafc4771d2f62facac0044e5f297b03230b834
+Author: Ty Barho <t.barho@gmail.com>
+Date:   Fri Oct 2 11:59:21 2026 -0500
+
+    fix: init read package.json via root() so it runs from dist; smoke runs every command from the packed build
+    
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+commit 78ffc4dade18b126e2aa2d671f4865b57610fc58
+Author: Ty Barho <t.barho@gmail.com>
+Date:   Fri Oct 2 10:38:11 2026 -0500
+
+    site: unlink the launch plan and mark it noindex
+    
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+commit d73cafe6f149a06d78311b56bf0ea898118cc654
+Author: Ty Barho <t.barho@gmail.com>
+Date:   Fri Oct 2 10:35:55 2026 -0500
+
+    site: drop the hero sticker card
+    
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+commit 629a0d7be90f9549ee3bb544ea24492ae7444c4f
+Author: Ty Barho <t.barho@gmail.com>
+Date:   Fri Oct 2 10:30:20 2026 -0500
+
+    fix: treat zombie router processes as stopped; run the container job with an init
+    
+    Without an init in the container, a stopped detached router lingers as a
+    zombie that still answers kill(0). isAlive now checks /proc/<pid>/stat.
+    
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+commit 9f54ec45232d4b5d09582d351e042bfeaf60d080
+Author: Ty Barho <t.barho@gmail.com>
+Date:   Fri Oct 2 10:27:34 2026 -0500
+
+    test: pin platform and shell per test so results never depend on the runner OS
+    
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+commit f8a3c0536f2b11ad60c83bde3c8233484073a432
+Author: Ty Barho <t.barho@gmail.com>
+Date:   Fri Oct 2 10:18:01 2026 -0500
+
+    test: scrub CI/runner/session env so the suite is hermetic on GitHub runners
+    
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+commit e42567a2ebe90097a4cd50f423298a089ac863ff
+Author: Ty Barho <t.barho@gmail.com>
+Date:   Fri Oct 2 10:15:45 2026 -0500
+
+    feat: barrito 1.0 — one local router, every identity

@@ -1,6 +1,7 @@
 // Shared shapes for every module. Owners may add fields; changing an existing one needs the coordinator.
 
 import type { ExecFileSyncOptions, SpawnOptions } from 'node:child_process'
+import type { TransformState, Transforms } from './router/transforms.ts'
 
 // ── outside world ────────────────────────────────────────────────────────────
 
@@ -40,6 +41,7 @@ export interface Identity {
   fallback: string[]
   match: Match
   keychain: Partial<Record<'gateway' | 'cursor', string>> & Record<string, string>
+  transforms?: Partial<TransformState>
 }
 
 export interface ModelRules {
@@ -80,6 +82,7 @@ export interface Config {
   models: ModelRules
   graft: GraftConfig
   harness: Record<string, Partial<Harness>>
+  transforms?: TransformState
   warnings?: string[]
 }
 
@@ -331,6 +334,7 @@ export interface ConfigInput {
   models?: Partial<ModelRules>
   graft?: Partial<GraftConfig>
   harness?: Record<string, Partial<Harness>>
+  transforms?: Partial<TransformState>
   warnings?: string[]
 }
 
@@ -355,6 +359,8 @@ export interface StatusData extends Omit<Status, 'pid' | 'uptime' | 'identities'
   pid: number | null
   uptime: number | null
   identities: Record<string, Partial<TierSnapshot>>
+  transforms?: Record<string, StatusTransforms>
+  rtk?: boolean
 }
 
 // Claude Code statusline stdin JSON
@@ -477,6 +483,7 @@ export interface LineInfo {
   to?: string
   reason?: string
   status: number
+  transforms?: string
 }
 
 export interface Parsed {
@@ -496,9 +503,22 @@ export interface StartOpts {
   keychain: Keychain
   log: Log
   upstreams: Upstreams
+  transforms?: Transforms
   maxBody?: number
 }
 
 // Tiers whose snapshot may return partial entries (the router only reads what it needs);
 // a real Tiers is still assignable — full TierSnapshot satisfies Partial<TierSnapshot>
 export type RouterTiers = Omit<Tiers, 'snapshot'> & { snapshot: () => Record<string, Partial<TierSnapshot>> }
+
+// ── transforms (rtk tool-output compression + caveman replies) ─────────────────
+// shapes owned by src/router/transforms.ts; re-exported here for every non-router module
+
+export type { Applied, Caveman, TransformState, Transforms } from './router/transforms.ts'
+
+// one identity's /status transform entry: its state plus bytes/compressions saved today
+export interface StatusTransforms {
+  state: TransformState
+  saved: number
+  compressed: number
+}

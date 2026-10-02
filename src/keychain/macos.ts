@@ -3,7 +3,7 @@ import type { ExecFileSyncOptions, ExecFileSyncOptionsWithStringEncoding } from 
 import type { Exec } from '../types.ts'
 
 const security = (exec: Exec | undefined, args: string[], opts: ExecFileSyncOptions = {}): string => {
-  const merged = { encoding: 'utf8', ...opts } as ExecFileSyncOptionsWithStringEncoding
+  const merged = { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], ...opts } as ExecFileSyncOptionsWithStringEncoding
   if (exec) return exec('/usr/bin/security', args, merged)
   return execFileSync('/usr/bin/security', args, merged)
 }

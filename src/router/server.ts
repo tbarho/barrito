@@ -1,10 +1,10 @@
 import http from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type {
-  Attempt, GatewayIdentity, Keys, Log, Parsed, Pin, RouterConfig, RouterTiers, Spend, StartOpts, Upstreams, UpstreamResponse,
+  Applied, Attempt, GatewayIdentity, Keys, Log, Parsed, Pin, RouterConfig, RouterTiers, Spend, StartOpts, TransformState, Transforms, Upstreams, UpstreamResponse,
 } from '../types.ts'
 export type {
-  Attempt, GatewayIdentity, Keys, LineInfo, Meter, Parsed, RouterConfig, SendOpts, StartOpts,
+  Applied, Attempt, GatewayIdentity, Keys, LineInfo, Meter, Parsed, RouterConfig, SendOpts, StartOpts, TransformState, Transforms,
 } from '../types.ts'
 import {
   bare,
@@ -22,6 +22,9 @@ import {
   rewrite,
   sleep,
   tierHeader,
+  transform,
+  transformsHeader,
+  transformsLog,
 } from './routes.ts'
 import { keyring, noKey, proxy, send } from './gateway.ts'
 
@@ -35,6 +38,7 @@ export interface ServeCtx {
   keys: Keys
   log: Log
   upstreams: Upstreams
+  transforms?: Transforms
   t0: number
   maxBody: number
 }
@@ -97,7 +101,7 @@ const attempt = async (
 const lower = (headers: UpstreamResponse['headers']): Record<string, string> => Object.fromEntries(headers)
 
 const claude = async (req: IncomingMessage, res: ServerResponse, ctx: ServeCtx): Promise<void> => {
-  const { config, tiers, spend, keys, log, upstreams, t0, maxBody } = ctx
+  const { config, tiers, spend, keys, log, upstreams, transforms, t0, maxBody } = ctx
   const id = String(req.headers['x-barrito-identity'] || '').trim()
   const identity = config.identities[id]
   if (!identity) {
@@ -126,11 +130,15 @@ const claude = async (req: IncomingMessage, res: ServerResponse, ctx: ServeCtx):
     reason = ('reason' in r ? r.reason : undefined) || '-'
   }
 
+  // transforms apply once per request — retries reuse the same rewritten bytes
+  const t = transform(transforms, 'anthropic', id, raw)
+  const applied = t.applied ?? { rtk: 0, caveman: 'off' as const, saved: 0 }
+
   const hops: string[] = []
   let up: UpstreamResponse | undefined
   let last: Attempt | undefined
   for (let n = 0; n < MAX_HOPS; n++) {
-    const a = await attempt(req, { raw, parsed, to, model, identity, keys, upstreams, abort })
+    const a = await attempt(req, { raw: t.out, parsed: t.body ?? parsed, to, model, identity, keys, upstreams, abort })
     last = a
     if (abort.signal.aborted) return // no observe, no bytes — the breaker must not see client aborts
     if (a.missing) {
@@ -178,6 +186,7 @@ const claude = async (req: IncomingMessage, res: ServerResponse, ctx: ServeCtx):
   const m = meter()
   reply(up, res, {
     tier: tierHeader(tiers.snapshot()[id]),
+    transforms: transforms ? transformsHeader(applied) : undefined,
     tap: (chunk: Buffer) => m.push(chunk, sse),
     done: () => {
       const usage = m.done(sse)
@@ -185,7 +194,7 @@ const claude = async (req: IncomingMessage, res: ServerResponse, ctx: ServeCtx):
       if (usage && to === 'gateway') spend.record(id, price, usage)
     },
   })
-  line(log, t0, { id, method: req.method, path: req.url ?? '', model: price, to, reason, status: up.status })
+  line(log, t0, { id, method: req.method, path: req.url ?? '', model: price, to, reason, status: up.status, transforms: transforms ? transformsLog(applied) : undefined })
 }
 
 const pin = async (req: IncomingMessage, res: ServerResponse, ctx: ServeCtx): Promise<void> => {
@@ -209,6 +218,49 @@ const pin = async (req: IncomingMessage, res: ServerResponse, ctx: ServeCtx): Pr
   line(log, t0, { id: identity, method: req.method, path: req.url ?? '', status: 200 })
 }
 
+const NO_TRANSFORMS = 'barrito: transforms not available on this router'
+
+const setTransforms = async (req: IncomingMessage, res: ServerResponse, ctx: ServeCtx): Promise<void> => {
+  const { config, transforms, log, t0, maxBody } = ctx
+  const parsed = parse(await body(req, maxBody))
+  const identity = typeof parsed.identity === 'string' ? parsed.identity : ''
+  if (!config.identities[identity]) {
+    fail(res, 400, 'invalid_request_error', NO_IDENTITY)
+    line(log, t0, { id: identity || '-', method: req.method, path: req.url ?? '', status: 400 })
+    return
+  }
+  if (!transforms) {
+    fail(res, 404, 'not_found_error', NO_TRANSFORMS)
+    line(log, t0, { id: identity, method: req.method, path: req.url ?? '', status: 404 })
+    return
+  }
+  const patch = (parsed.reset ? null : { rtk: parsed.rtk, caveman: parsed.caveman }) as Partial<TransformState> | null
+  try {
+    const state = transforms.set(identity, patch)
+    json(res, 200, { ok: true, state })
+  } catch (error) {
+    // transforms.set validates the patch; surface its message, not a generic 500
+    fail(res, 400, 'invalid_request_error', error instanceof Error ? error.message : String(error))
+    line(log, t0, { id: identity, method: req.method, path: req.url ?? '', status: 400 })
+    return
+  }
+  line(log, t0, { id: identity, method: req.method, path: req.url ?? '', status: 200 })
+}
+
+// every configured identity plus any with saved-today stats, each with its state and today's savings
+const transformsStatus = (ctx: ServeCtx): Record<string, { state: unknown; saved: number; compressed: number }> => {
+  const tx = ctx.transforms
+  if (!tx) return {}
+  const stats = tx.stats()
+  const ids = new Set([...Object.keys(ctx.config.identities), ...Object.keys(stats)])
+  return Object.fromEntries(
+    [...ids].map((id) => {
+      const s = stats[id] ?? { saved: 0, compressed: 0 }
+      return [id, { state: tx.state(id), ...s }] as const
+    }),
+  )
+}
+
 const serve = async (req: IncomingMessage, res: ServerResponse, ctx: ServeCtx): Promise<void> => {
   const path = (req.url ?? '').split('?')[0] ?? ''
   if (req.method === 'GET' && path === '/health') {
@@ -222,11 +274,14 @@ const serve = async (req: IncomingMessage, res: ServerResponse, ctx: ServeCtx): 
       uptime: process.uptime(),
       identities: ctx.tiers.snapshot(),
       spend: ctx.spend.today(),
+      transforms: transformsStatus(ctx),
+      rtk: ctx.transforms?.available() ?? false,
     })
     line(ctx.log, ctx.t0, { method: req.method, path, status: 200 })
     return
   }
   if (req.method === 'POST' && path === '/pin') return pin(req, res, ctx)
+  if (req.method === 'POST' && path === '/transforms') return setTransforms(req, res, ctx)
   if (/^\/gateway(\/|$)/.test(req.url ?? '')) return proxy(req, res, ctx)
   if ((req.url ?? '').startsWith('/gateway')) {
     fail(res, 404, 'not_found_error', 'barrito: not found')
@@ -244,13 +299,14 @@ export const start = ({
   keychain,
   log,
   upstreams,
+  transforms,
   maxBody = 64 * 1024 * 1024,
 }: StartOpts): http.Server => {
   const keys = keyring(keychain)
   const server = http.createServer((req, res) => {
     res.on('error', () => {})
     const t0 = Date.now()
-    serve(req, res, { config, tiers, spend, keys, log, upstreams, t0, maxBody }).catch((error: unknown) => {
+    serve(req, res, { config, tiers, spend, keys, log, upstreams, transforms, t0, maxBody }).catch((error: unknown) => {
       if (res.headersSent) return res.destroy()
       const status = error && typeof error === 'object' && 'status' in error ? (error as { status?: number }).status : undefined
       if (status) {

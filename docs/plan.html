@@ -96,6 +96,7 @@ ol.steps>li::before{content:counter(s,decimal-leading-zero);position:absolute;le
   <a href="#harness">Harnesses</a>
   <a href="#router">Router</a>
   <a href="#fallback">Fallback</a>
+  <a href="#tokens">Token savers</a>
   <a href="#config">Config</a>
   <a href="#graft">Graft</a>
   <a href="#migrate">Migration</a>
@@ -133,6 +134,7 @@ ol.steps>li::before{content:counter(s,decimal-leading-zero);position:absolute;le
     <li>Wizard <code>barrito init</code>, plus <code>status</code>, <code>which</code>, <code>doctor</code>, <code>pin</code>, <code>models</code>, <code>graft</code>, <code>shim</code>, <code>logs</code>, <code>exec</code>, <code>env</code>, <code>uninstall</code>.</li>
     <li>Rule-based Claude Code model registration: <code>barrito models sync</code> renders the gateway catalog (filtered by your rules) into <code>modelPicker</code> and the subagent files for every identity. Rerunnable; replaces the hand-kept <code>claude-settings.json</code> and <code>global/agents/</code>.</li>
     <li><code>/barrito</code> slash command installed into each Claude config dir (<code>status</code>, <code>pin</code>, <code>unpin</code> from inside a session).</li>
+    <li>Token savers in the router: <code>rtk</code> compression of noisy tool output (compressed once, cached, prompt-cache-safe) and caveman terse replies (<code>off/lite/full/ultra</code>), global + per-identity, toggled from config, <code>barrito set</code> or the slash command. See <a href="#tokens">Token savers</a>.</li>
     <li>Loud signals: platform notification on every tier change (macOS notification, Linux <code>notify-send</code>, GitHub annotation in CI), a statusline segment, an <code>x-barrito-tier</code> response header, and the log.</li>
     <li>Linux, same router and CLI: <code>systemd --user</code> service unit, <code>secret-tool</code> keychain, XDG paths, <code>notify-send</code>.</li>
     <li>CI: <code>barrito ci</code> for GitHub Actions (shims → <code>$GITHUB_PATH</code>, router env → <code>$GITHUB_ENV</code>, tier changes + API spend → the step summary) and <code>serve --detach</code> for containers, with <code>env:</code>/<code>file:</code> secrets where there's no keyring.</li>
@@ -147,7 +149,6 @@ ol.steps>li::before{content:counter(s,decimal-leading-zero);position:absolute;le
     <li>Max for anything other than genuine Claude Code. That's the compliance line.</li>
     <li>Subscription pooling and multi-account round-robin.</li>
     <li>Free-tier OAuth providers (Kiro, iFlow, Qwen). Same token-replay pattern, plus unvetted data handling.</li>
-    <li>Proxy-side RTK or caveman rewriting. Those stay at the hook and skill layer.</li>
     <li>Fallback chains for Gateway-level harnesses. They choose their own model, there's no Max to run out, and the gateway already falls back between providers.</li>
     <li>Dashboard UI. <code>status</code>, the statusline and logs cover it.</li>
     <li>Changes to other transcript tooling beyond reading both transcript roots.</li>
@@ -165,8 +166,9 @@ ol.steps>li::before{content:counter(s,decimal-leading-zero);position:absolute;le
     <tr><td><code>barrito which [path]</code></td><td>Identity for a path and the rule that matched.</td></tr>
     <tr><td><code>barrito doctor</code></td><td>PATH order, service health, logins, keychain items, host restarts needed. Exits non-zero on any ✗.</td></tr>
     <tr><td><code>barrito pin &lt;id&gt; &lt;max|model&gt;</code> / <code>unpin &lt;id&gt;</code></td><td>Identity-wide default for <em>all</em> sessions. Pinning <code>max</code> means quota errors surface instead of falling back. Per-session choice is <code>/model</code>, not pin.</td></tr>
+    <tr><td><code>barrito set [&lt;id&gt;] rtk|caveman &lt;value&gt;</code></td><td>Token savers per identity: <code>rtk on|off</code>, <code>caveman off|lite|full|ultra</code>. No identity → the global default. See <a href="#tokens">Token savers</a>.</td></tr>
     <tr><td><code>barrito models [sync|search|add|rm]</code></td><td>Show the picker, sync it from the gateway catalog by rules (<code>--dry-run</code>, <code>--all</code>), browse with prices, pin or drop one.</td></tr>
-    <tr><td><code>/barrito [status|pin|unpin]</code></td><td>Slash command inside Claude Code; wraps the CLI.</td></tr>
+    <tr><td><code>/barrito [status|pin|unpin|rtk|caveman]</code></td><td>Slash command inside Claude Code; wraps the CLI. Also toggles token savers: <code>/barrito caveman ultra</code>, <code>/barrito rtk off</code>.</td></tr>
     <tr><td><code>barrito graft [add|rm|build] [path]</code></td><td>Repo checklist, wire and build graphs.</td></tr>
     <tr><td><code>barrito shim [harness…]</code></td><td>(Re)generate shims for built-in or config-defined harnesses.</td></tr>
     <tr><td><code>barrito exec &lt;bin&gt; -- args</code></td><td>Run any binary with its identity applied. What shims call.</td></tr>
@@ -316,7 +318,7 @@ header         x-barrito-tier: fallback:glm-5.3; reason=quota; reset=2026-10-01T
   <h2>Bring your own harness</h2>
   <table><thead><tr><th>Level</th><th>Harnesses</th><th>Mechanism</th></tr></thead><tbody>
     <tr><td><b>Full</b></td><td>Claude Code</td><td><code>ANTHROPIC_BASE_URL=http://127.0.0.1:4141</code>, <code>CLAUDE_CONFIG_DIR</code> per identity (which switches the Max login), <code>ANTHROPIC_CUSTOM_HEADERS=x-barrito-identity: &lt;id&gt;</code>. The router runs the tier state machine.</td></tr>
-    <tr><td><b>Gateway</b></td><td>Codex, OpenCode, custom scripts, AI SDK apps</td><td>Base URL → <code>http://127.0.0.1:4141/gateway</code>; API key = handle <code>barrito:&lt;id&gt;</code>. The router swaps the handle for the identity's Vercel key and reverse-proxies unchanged. No translation.</td></tr>
+    <tr><td><b>Gateway</b></td><td>Codex, OpenCode, custom scripts, AI SDK apps</td><td>Base URL → <code>http://127.0.0.1:4141/gateway</code>; API key = handle <code>barrito:&lt;id&gt;</code>. The router swaps the handle for the identity's Vercel key and reverse-proxies the request. No translation.</td></tr>
     <tr><td><b>Env</b></td><td>cursor-agent</td><td>Cursor's own backend can't be proxied. The shim injects <code>CURSOR_API_KEY</code> from Keychain plus <code>AGENT_CLI_CREDENTIAL_STORE=file</code> (keeps today's fix).</td></tr>
   </tbody></table>
   <p>Built-in harness table (shipped in the package, overridable in config):</p>
@@ -356,9 +358,9 @@ exec "$BARRITO_REAL_BIN" "$@"</code></pre>
   <h2>Request handling</h2>
   <p>Evolves the hand-rolled router it replaces: <code>node:http</code> + <code>fetch</code>, zero runtime deps, streaming passthrough, aborting upstream on client close, logs carry no headers or bodies.</p>
   <table><thead><tr><th>Request</th><th>Route</th></tr></thead><tbody>
-    <tr><td>Bare Claude model (<code>claude-*</code>, <code>anthropic/claude-*</code>, <code>[1m]</code>), identity tier = <code>max</code></td><td>Direct <code>api.anthropic.com</code>. Body model normalized. Strip <code>x-barrito-*</code> and <code>x-ai-gateway-api-key</code>. Everything else unchanged.</td></tr>
+    <tr><td>Bare Claude model (<code>claude-*</code>, <code>anthropic/claude-*</code>, <code>[1m]</code>), identity tier = <code>max</code></td><td>Direct <code>api.anthropic.com</code>. Body model normalized. Strip <code>x-barrito-*</code> and <code>x-ai-gateway-api-key</code>.</td></tr>
     <tr><td>Same, identity tier = <code>fallback</code> or pinned to a model</td><td>Gateway <code>/claude-code</code>; model rewritten to the active chain entry; <code>authorization</code> (Max OAuth) stripped; identity key added.</td></tr>
-    <tr><td>Explicit gateway picker ID (<code>claude-code/*</code>), <code>*-fast</code>, <code>GET /v1/models</code></td><td>Gateway, unchanged from today. Explicit choices bypass the state machine.</td></tr>
+    <tr><td>Explicit gateway picker ID (<code>claude-code/*</code>), <code>*-fast</code>, <code>GET /v1/models</code></td><td>Gateway, same as today. Explicit choices bypass the state machine.</td></tr>
     <tr><td><code>/gateway/*</code> with <code>Bearer barrito:&lt;id&gt;</code></td><td>Reverse proxy to <code>https://ai-gateway.vercel.sh/*</code> with the identity key. Any format.</td></tr>
     <tr><td><code>GET /status</code>, <code>GET /health</code></td><td>Local JSON for the CLI and statusline.</td></tr>
     <tr><td>Missing or unknown identity</td><td>400, Anthropic-shaped error: <code>barrito: no identity for this request — run barrito doctor</code>.</td></tr>
@@ -380,10 +382,36 @@ exec "$BARRITO_REAL_BIN" "$@"</code></pre>
     <li><b>No failed turns.</b> The 429 or 5xx that triggers a transition arrives before any stream bytes, so the same request is retried on the chain immediately. The user sees an answer, not an error.</li>
     <li><b>Chain walk.</b> If entry <em>n</em> fails (429/5xx), try <em>n+1</em>. When everything fails, return an Anthropic-shaped error listing each hop and its status.</li>
     <li><b>Loud on every transition.</b> One notification (<code>osascript display notification</code>; <code>terminal-notifier</code> if present), a log line, a statusline change, and the response header. No repeats until the state changes again.</li>
-    <li><b>Never mutate model output.</b> No injected text in streams, so context stays clean.</li>
+    <li><b>No injected text.</b> Fallback itself adds no injected text to streams, so context stays clean.</li>
     <li><b>Spend tracking.</b> Sum usage from response <code>usage</code> blocks on gateway hops × gateway list price (catalog fetched daily) → <code>API TODAY</code>. Shown as an estimate; Vercel's dashboard is the source of truth.</li>
   </ul>
   <p>Statusline: <code>init</code> sets each Claude config's <code>statusLine</code> to <code>barrito statusline</code>. If a statusline already exists, it's wrapped (<code>barrito statusline --append '&lt;existing cmd&gt;'</code>). The command reads the cwd from Claude Code's stdin JSON → identity → <code>/status</code>, with a 50ms timeout and silent degrade.</p>
+</section>
+
+<section id="tokens">
+  <p class="eyebrow">Token savers</p>
+  <h2>Fewer tokens, same answers</h2>
+  <p>Two optional transforms run in the router, so every harness gets them — Claude Code, Codex, OpenCode, custom — with zero per-tool setup. Both are one command from off.</p>
+  <ul>
+    <li><b>RTK:</b> noisy tool output (git diffs, listings, grep, test and build logs) is compressed through the installed <code>rtk</code> binary before it reaches the model. Each output is compressed once and cached, so prompt caching stays intact. Requires <code>rtk</code> on PATH — <code>doctor</code> warns when it's on but missing. Default on.</li>
+    <li><b>Caveman:</b> terse replies — <code>off · lite · full · ultra</code>. Code, commands and errors stay verbatim. Default <code>lite</code>.</li>
+    <li><b>Toggles:</b> config <code>[transforms]</code> + per-identity overrides, <code>barrito set work caveman ultra</code>, or the slash command (<code>/barrito caveman ultra</code>, <code>/barrito rtk off</code>). The statusline shows what's active (<code>work · Max 62% · rtk · cave:lite</code>); <code>status</code> shows tokens saved today. RTK is its authors' tool — barrito just pipes through it.</li>
+  </ul>
+  <h3>Design notes</h3>
+  <ul>
+    <li>Wrap the <code>rtk</code> binary, don't reimplement it: <code>rtk rewrite</code> maps a raw command to its RTK equivalent, <code>rtk pipe --filter</code> filters captured output in Unix pipe mode.</li>
+    <li>Compression is sha256-keyed in a content cache — same output in, same compressed bytes out — so prompt caching stays intact.</li>
+    <li>1.5KB floor: smaller tool output passes through raw. Any rtk error, or a &gt;300ms timeout, falls back to raw bytes — never a failed or stalled request.</li>
+    <li>Caveman is a constant system-prompt suffix per level — no per-message rewriting, no history edits.</li>
+    <li>An <code>x-barrito-transforms</code> response header records what ran, mirroring <code>x-barrito-tier</code>.</li>
+  </ul>
+  <p class="cap">config</p>
+<pre><code>[transforms]
+rtk = true
+caveman = "lite"
+
+[identities.personal.transforms]
+caveman = "ultra"</code></pre>
 </section>
 
 <section id="config">
@@ -488,7 +516,7 @@ yarn global add barrito && barrito init</code></pre>
 <section id="linux">
   <p class="eyebrow">Platforms</p>
   <h2>Linux &amp; CI</h2>
-  <p>Same router, same CLI, platform adapters instead of a port. Compliance is unchanged: Max only ever flows through genuine Claude Code.</p>
+  <p>Same router, same CLI, platform adapters instead of a port. Compliance holds everywhere: Max only ever flows through genuine Claude Code.</p>
   <table><thead><tr><th>Area</th><th>Behavior</th></tr></thead><tbody>
     <tr><td>Secrets</td><td><code>secret(ref)</code>: a plain name resolves in the platform keychain (macOS <code>security</code>, Linux <code>secret-tool</code>); <code>env:VAR</code> and <code>file:/path</code> work anywhere. Clear error if <code>secret-tool</code>/D-Bus is missing.</td></tr>
     <tr><td>Service</td><td><code>systemd --user</code> unit (install/uninstall/status/restart, with a <code>loginctl enable-linger</code> note). <code>none</code> mode → <code>barrito serve --detach</code> (pidfile) + <code>barrito stop</code>.</td></tr>
@@ -523,7 +551,8 @@ yarn global add barrito && barrito init</code></pre>
     <li><b>Identity</b>: table tests for env, remote (ssh/https/enterprise hosts), path, default, cache invalidation on remote change.</li>
     <li><b>Shim e2e</b>: <code>env -i PATH=… HOME=…</code> launch from a fake emdash worktree resolves the right identity for each harness, and the real binary gets the expected env (stub binaries print their env).</li>
     <li><b>Models sync</b>: fixture catalog → rules → snapshot of <code>modelPicker</code> + agent files; second run = no diff; retired model flagged in chain/subagents; hand labels preserved.</li>
-    <li><b>Gateway proxy</b>: handle swap, unknown handle → 401, OpenAI and Anthropic paths both pass through byte-for-byte.</li>
+    <li><b>Gateway proxy</b>: handle swap, unknown handle → 401, OpenAI and Anthropic paths both pass through byte-for-byte with transforms off.</li>
+    <li><b>Transforms</b>: rtk wrap (size floor, timeout/error → raw, cache hit returns identical bytes), caveman levels and constant suffix, per-identity overrides, <code>x-barrito-transforms</code> header.</li>
     <li><b>init</b>: <code>--dry-run</code> snapshot against a fixture HOME with today's setup; idempotent second run = no diff; <code>uninstall --restore</code> round-trip.</li>
     <li><b>Manual acceptance</b>: emdash api worktree → work Max; dotfiles worktree → personal Max; Conductor side-project workspace → personal; forced quota (mock) → notification + statusline + GLM answer; Codex and OpenCode in an acme repo bill the acme gateway team (verify in the Vercel dashboard).</li>
   </ul>

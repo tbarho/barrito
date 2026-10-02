@@ -187,6 +187,21 @@ const hosts = (exec: Exec | undefined): DoctorCheck[] => {
 const quiet = (bin: string, args: string[], o: ExecFileSyncOptions = {}): string =>
   execFileSync(bin, args, { ...o, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
 
+const onPath = (pathEnv: string | undefined, bin: string): boolean =>
+  (pathEnv ?? '').split(':').filter(Boolean).some((d) => xok(path.join(real(d) ?? d, bin)))
+
+// rtk-enabled identities compress tool output through the rtk binary before it hits the model
+const rtkEnabled = (config: Config | null): boolean => {
+  const ids = Object.keys(config?.identities ?? {})
+  if (!ids.length) return config?.transforms?.rtk ?? true
+  return ids.some((id) => config?.identities?.[id]?.transforms?.rtk ?? config?.transforms?.rtk ?? true)
+}
+
+const rtkCheck = (config: Config | null, pathEnv: string | undefined): DoctorCheck | null => {
+  if (!rtkEnabled(config) || onPath(pathEnv, 'rtk')) return null
+  return { level: 'warn', text: 'rtk enabled but not on PATH — brew install rtk, then barrito doctor' }
+}
+
 const tilde = (p: string): string => p.startsWith(home()) ? `~${p.slice(home().length)}` : p
 
 type Env = Record<string, string | undefined>
@@ -289,6 +304,8 @@ export const diagnose = async (
     if (url) results.push(url)
   }
 
+  const rtk = rtkCheck(config, pathEnv)
+  if (rtk) results.push(rtk)
   results.push(...modelsBits(config, settings.read), ...hosts(exec))
   return results
 }

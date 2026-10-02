@@ -18,7 +18,7 @@ export const rcClose = '# <<< barrito <<<'
 
 const byName: Record<string, Builtin> = builtins
 
-const defaultExec: Exec = (bin, args) => execFileSync(bin, args, { encoding: 'utf8' })
+const defaultExec: Exec = (bin, args) => execFileSync(bin, args, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] })
 const json = (fs: typeof fsx, file: string): unknown => {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')) } catch { return null }
 }
