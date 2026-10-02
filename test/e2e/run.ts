@@ -8,6 +8,7 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { isAlive } from '../../src/cli/serve.ts'
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const bin = path.join(repo, 'bin', 'barrito.ts')
@@ -222,9 +223,7 @@ const main = async (): Promise<void> => {
     that(summary.includes('quota'), `summary reason:\n${summary}`)
 
     that(!existsSync(files.pid), 'pidfile removed')
-    let alive = true
-    try { process.kill(routerPid!, 0) } catch { alive = false }
-    that(!alive, 'router process is gone')
+    that(!isAlive(routerPid!), 'router process is gone')
     let answers = true
     try { answers = (await fetch(`${router}/health`)).ok } catch { answers = false }
     that(!answers, 'router port is closed')

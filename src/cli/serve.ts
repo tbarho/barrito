@@ -100,9 +100,17 @@ const spawnDefault: Spawn = (cmd, opts = {}) => {
 
 const defaultFetch: FetchJson = (url, init) => globalThis.fetch(url, init)
 
-const aliveDefault = (pid: number): boolean => {
-  try { process.kill(pid, 0); return true } catch { return false }
+// a reaped-never child (no init in a container) still answers kill(0); /proc says it's a zombie
+const zombie = (pid: number): boolean => {
+  try { return readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1]?.startsWith('Z') ?? false } catch { return false }
 }
+
+export const isAlive = (pid: number): boolean => {
+  try { process.kill(pid, 0) } catch { return false }
+  return !zombie(pid)
+}
+
+const aliveDefault = isAlive
 
 export interface DetachOpts {
   config: Config

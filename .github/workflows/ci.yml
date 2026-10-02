@@ -45,7 +45,9 @@ jobs:
   # and the loud "no keyring available" failure all work on a bare container
   container:
     runs-on: ubuntu-latest
-    container: node:22-slim
+    container:
+      image: node:22-slim
+      options: --init
     env:
       BARRITO_HOME: /tmp/barrito-ci
       BARRITO_CONFIG: /tmp/barrito-ci/config.toml
