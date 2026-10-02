@@ -120,7 +120,7 @@ export async function flare(canvas, motion, stats, fallback) {
       passes.forEach((pass, i) => {
         const data = new Float32Array([
           ...size, time, 0, ...anchor,
-          anchor[0] + (pointer[0] * 24 - 8) / size[0], anchor[1] + (pointer[1] * 22 + Math.sin(time * 0.3) * 7) / size[1], heading, pointer[2],
+          anchor[0] - (pointer[0] * 55 + 8) / size[0], anchor[1] - (pointer[1] * 48 + Math.sin(time * 0.3) * 7) / size[1], heading, pointer[2],
           i === 1 ? 1.5 : 0, i === 2 ? 1.5 : 0, low ? 16 : 32, 0
         ]);
         device.queue.writeBuffer(buffers[i], 0, data);

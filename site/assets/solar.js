@@ -12,7 +12,7 @@ export function system(width, time, pointer = [0, 0]) {
   const scale = mobile ? Math.min((width - 30) / 630, 0.6) : 1;
   return worlds.filter((_, i) => !mobile || [0, 2, 3, 4].includes(i)).map(([orbit, radius, phase, tilt, squash, ...color], i) => {
     const a = orbit * scale;
-    const angle = phase + time * 0.055 * (112 / orbit) ** 1.5;
+    const angle = phase + time * (Math.PI * 2 / 9) * (112 / orbit) ** 1.25;
     const eccentric = angle + 0.09 * Math.sin(angle);
     const turn = tilt + pointer[0] * 0.045;
     const q = squash + pointer[1] * 0.025;
@@ -58,9 +58,9 @@ export async function solar(device, image, sampler, hero, logo, format) {
     { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} }
   ] });
   const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
-  const pipelines = await Promise.all(['orbit', 'back', 'sun', 'front'].map(name => device.createRenderPipelineAsync({
+  const pipelines = await Promise.all(['stars', 'orbit', 'back', 'sun', 'front'].map(name => device.createRenderPipelineAsync({
     layout: pipelineLayout,
-    vertex: { module, entryPoint: name === 'orbit' ? 'orbitVertex' : name === 'sun' ? 'sunVertex' : 'bodyVertex' },
+    vertex: { module, entryPoint: name === 'stars' ? 'skyVertex' : name === 'orbit' ? 'orbitVertex' : name === 'sun' ? 'sunVertex' : 'bodyVertex' },
     fragment: { module, entryPoint: name, targets: [{ format, blend: {
       color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }, alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }
     } }] }, primitive: { topology: 'triangle-list' }
@@ -84,7 +84,7 @@ export async function solar(device, image, sampler, hero, logo, format) {
     draw(encoder, time, pointer, timestampWrites) {
       const bodies = system(hero.clientWidth, time, pointer);
       const data = new Float32Array(80);
-      data.set([rect.width, rect.height, rect.logo, time, ...pointer.slice(0, 2), rect.mobile ? 1 : 0, 0]);
+      data.set([rect.width, rect.height, rect.logo, time, ...pointer.slice(0, 2), rect.mobile ? 1 : 0, pointer[2] || 0]);
       bodies.forEach((body, i) => data.set(body, 8 + i * 12));
       device.queue.writeBuffer(buffer, 0, data);
       const pass = encoder.beginRenderPass({ colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] }], timestampWrites });
@@ -92,7 +92,7 @@ export async function solar(device, image, sampler, hero, logo, format) {
       pass.setBindGroup(0, bind);
       pipelines.forEach((pipeline, i) => {
         pass.setPipeline(pipeline);
-        pass.draw(i === 0 ? 128 * 6 : 6, i === 2 ? 1 : bodies.length);
+        pass.draw(i === 1 ? 128 * 6 : 6, i === 0 || i === 3 ? 1 : bodies.length);
       });
       pass.end();
     },
