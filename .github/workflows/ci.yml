@@ -1,0 +1,106 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        node: ['22.x', '26.x']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+      - run: yarn verify
+      - run: yarn smoke
+
+  # full `barrito ci` flow against fake upstreams: direct hop, quota fallback
+  # with the ::warning annotation, gateway proxy, ci stop step summary
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.x
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+      - run: yarn verify
+      - run: yarn e2e
+
+  # no systemd, no D-Bus, no keyring — proves env: refs, the detached router
+  # and the loud "no keyring available" failure all work on a bare container
+  container:
+    runs-on: ubuntu-latest
+    container: node:22-slim
+    env:
+      BARRITO_HOME: /tmp/barrito-ci
+      BARRITO_CONFIG: /tmp/barrito-ci/config.toml
+      BARRITO_STATE: /tmp/barrito-ci/state
+      BARRITO_SHIMS: /tmp/barrito-ci/shims
+      BARRITO_LOG: /tmp/barrito-ci/barrito.log
+    steps:
+      - name: install git
+        run: apt-get update -qq && apt-get install -y -qq git
+      - uses: actions/checkout@v5
+      - run: yarn install --frozen-lockfile
+      - run: yarn verify
+      - run: yarn e2e
+      - name: detached router, stop, and loud keyring failures
+        run: |
+          mkdir -p "$(dirname "$BARRITO_CONFIG")"
+          cat > "$BARRITO_CONFIG" <<'EOF'
+          port = 4761
+          default = "ci"
+
+          [identities.ci]
+          claude_config_dir = "/tmp/barrito-ci/.claude"
+          fallback = ["zai/glm-5.3"]
+          keychain.gateway = "Vercel AI Gateway CI"
+          EOF
+          node bin/barrito.ts serve --detach
+          node bin/barrito.ts stop
+          set +e
+          msg=$(node bin/barrito.ts models sync --dry-run 2>&1)
+          code=$?
+          set -e
+          echo "$msg"
+          [ "$code" -ne 0 ] || { echo "FAIL: a keyring-name gateway ref must not resolve"; exit 1; }
+          echo "$msg" | grep -q "no keyring available" || { echo "FAIL: missing the no-keyring message"; exit 1; }
+      # a multi-line --identity must die before anything reaches $GITHUB_ENV
+      - name: GITHUB_ENV injection probe
+        env:
+          BARRITO_HOME: /tmp/barrito-probe/home
+          BARRITO_CONFIG: /tmp/barrito-probe/config.toml
+          BARRITO_STATE: /tmp/barrito-probe/state
+          BARRITO_SHIMS: /tmp/barrito-probe/shims
+          BARRITO_LOG: /tmp/barrito-probe/barrito.log
+          RUNNER_TEMP: /tmp/barrito-probe/runner
+          GITHUB_ENV: /tmp/barrito-probe/github-env
+          GITHUB_PATH: /tmp/barrito-probe/github-path
+          GITHUB_STEP_SUMMARY: /tmp/barrito-probe/summary.md
+        run: |
+          mkdir -p "$RUNNER_TEMP"
+          : > "$GITHUB_ENV"
+          before=$(shasum -a 256 "$GITHUB_ENV" | cut -d' ' -f1)
+          set +e
+          msg=$(node bin/barrito.ts ci --identity $'ci\nEVIL=1' 2>&1)
+          code=$?
+          set -e
+          echo "$msg"
+          [ "$code" -ne 0 ] || { echo "FAIL: multi-line --identity must be rejected"; exit 1; }
+          after=$(shasum -a 256 "$GITHUB_ENV" | cut -d' ' -f1)
+          [ "$before" = "$after" ] || { echo "FAIL: GITHUB_ENV was modified"; exit 1; }

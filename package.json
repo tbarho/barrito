@@ -1,0 +1,37 @@
+{
+  "name": "barrito",
+  "version": "1.0.0",
+  "description": "One local router, every identity. Per-repo Claude Max + Vercel AI Gateway routing for any coding agent.",
+  "type": "module",
+  "bin": {
+    "barrito": "dist/bin/barrito.js"
+  },
+  "files": [
+    "dist/bin",
+    "dist/src",
+    "templates"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test 'test/*.test.ts'",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "e2e": "node test/e2e/run.ts",
+    "smoke": "bash scripts/smoke.sh",
+    "prepublishOnly": "yarn verify && yarn build",
+    "verify": "yarn typecheck && yarn test"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.11.0",
+    "picocolors": "^1.1.1",
+    "smol-toml": "^1.4.0"
+  },
+  "license": "MIT",
+  "repository": "github:tbarho/barrito",
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "typescript": "^7.0.2"
+  }
+}

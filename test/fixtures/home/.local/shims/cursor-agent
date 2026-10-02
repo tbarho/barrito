@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# cursor-agent shim: per-directory Cursor identity + file credential store.
+export AGENT_CLI_CREDENTIAL_STORE=file
+exec "$HOME/.local/bin/cursor-agent" "$@"

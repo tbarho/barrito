@@ -1,0 +1,12 @@
+[Unit]
+Description=barrito router
+
+[Service]
+ExecStart=__NODE__ __BIN__ serve
+Restart=always
+Environment="BARRITO_PORT=__PORT__" "PATH=__PATH__"
+StandardOutput=append:__LOGS__
+StandardError=append:__LOGS__
+
+[Install]
+WantedBy=default.target

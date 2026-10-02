@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# opencode shim: per-directory Vercel AI Gateway key.
+set -euo pipefail
+. "$(dirname "$0")/_ai-gateway-env.sh"
+exec /usr/local/bin/opencode "$@"

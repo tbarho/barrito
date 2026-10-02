@@ -1,0 +1,269 @@
+# barrito — module contracts
+
+Every module codes against these signatures. Do not change a signature you don't own; if you need one changed, say so in your report.
+Full product spec: `docs/plan.html`.
+
+## Style (mandatory)
+
+- Strict TypeScript (`tsconfig.json`: strict, noUncheckedIndexedAccess, erasableSyntaxOnly, verbatimModuleSyntax), Node >= 22.18 runs `.ts` directly; `tsc -p tsconfig.build.json` emits `dist/` for npm.
+- Shared shapes live in `src/types.ts` — `import type { … } from './types.ts'`. Type every exported function's params and return. No `any`; use `unknown` + narrowing at boundaries (JSON.parse, fetch, TOML). Erasable syntax only: no `enum`, `namespace`, parameter properties. Relative imports use the `.ts` extension.
+- Templates and package files are located via `root()` from `src/paths.ts` (package root), never `../templates` relative to `import.meta.url` (breaks in `dist/`).
+- Minimal names: `snooze()` not `handleSnoozeAction()`.
+- Guard clauses / early return. No nested `if`. No `else` unless unavoidable.
+- Prefer `.reduce((memo, item) => …)` over `for` loops.
+- DRY. Comments only when absolutely necessary.
+- Package manager: yarn. Tests: `node:test` + `node:assert/strict`, files `test/<module>.test.ts`, run with `yarn verify` (typecheck + `node --test 'test/*.test.ts'`). Full `barrito ci` flow against fake upstreams: `yarn e2e` (`test/e2e/run.ts`).
+- Router code (`src/router/**`) imports only `node:*` builtins, `src/types.ts` and its own siblings (`routes.ts`, `gateway.ts`).
+- Runtime deps available: `@clack/prompts`, `picocolors`, `smol-toml`. No others without asking.
+- Every function that touches the outside world (fs paths, `security`, `secret-tool`, `systemctl`/`launchctl`, `git`, `fetch`, `osascript`, clock) takes it via an options object, or reads it from `src/paths.ts`, so tests can inject fakes. Tests never touch the real HOME, the Keychain, or the network.
+
+## `src/paths.ts` (owner: D)
+
+```ts
+export const home = (): string             // BARRITO_HOME || os.homedir() — FUNCTION (lazy), use `${home()}/x`
+export const expand = (p: string): string // '~' and '~/' → home()
+export const root = (): string            // absolute package root: walks up from this file to our package.json (cached); works from src/ and dist/src/
+export const platform = (): 'darwin' | 'linux'  // BARRITO_PLATFORM override (validated); throws on any other platform
+export const paths = {
+  config,   // ~/.config/barrito/config.toml   (Linux: $XDG_CONFIG_HOME)   (BARRITO_CONFIG overrides)
+  state,    // ~/.local/state/barrito/          (Linux: $XDG_STATE_HOME)   (BARRITO_STATE overrides)
+  logs,     // ~/Library/Logs/barrito.log       (Linux: <state>/barrito.log) (BARRITO_LOG overrides)
+  backup,   // <config dir>/backup/
+  shims,    // ~/.local/shims/                  (BARRITO_SHIMS overrides)
+}
+```
+
+Every member of `paths` is a lazy getter, so tests can set `BARRITO_*` after import and still see the override.
+
+## `src/config.ts` (owner: D)
+
+```ts
+export const load = (file = paths.config) => Config & { warnings: string[] }  // parse TOML, merge defaults, validate, expand ~, collect unknown-key warnings
+export const save = (config: ConfigInput, file = paths.config) => void       // write TOML atomically (tmp + rename); collapses ~ back
+export const defaults = { port: 4141, default: 'personal', identities: {}, models: {}, graft: { roots: [], repos: [] }, harness: {} }
+```
+
+Resolved config shape (what `load` returns) — `keychain` slots accept any ref form (a plain keyring name, `env:VAR`, `file:/path`):
+
+```ts
+{
+  port: 4141,
+  default: 'personal',
+  identities: {
+    work: {
+      id: 'work',
+      claude_config_dir: '/Users/x/.claude',
+      share_from: null | '/Users/x/.claude',
+      fallback: [],                        // missing = "stop and tell me"; init writes the user's choice, never a paid chain
+      match: { remotes: ['github.com/acme/*'], paths: ['/Users/x/Code/acme/**'] },
+      keychain: { gateway: 'Vercel AI Gateway Work', cursor: 'Cursor Work' },  // 'env:VAR' and 'file:/path' allowed
+    },
+  },
+  models: {
+    include: [], exclude: [], require: ['tool-use'], max_input_price: null, pin: [], labels: {},
+    suffix: {},                            // optional per-model '[1m]' override
+    agents: { astra: 'openai/gpt-6-astra', glm: 'zai/glm-5.3[1m]', deepseek: 'deepseek/deepseek-v4.1-flash[1m]' },
+  },
+  graft: { roots: ['/Users/x/Code'], repos: [{ path: '/Users/x/Code/acme/api', summaries: false }] },
+  harness: { mybot: { bin: 'mybot', env: { OPENAI_BASE_URL: '{gateway}/v1' } } },
+  warnings: ['unknown key "x" ignored …'],
+}
+```
+
+## `src/keychain/index.ts` (owner: D)
+
+```ts
+export const kind = (ref: string): 'env' | 'file' | 'keyring'
+export const get = (service: string, opts: GetOpts = {}) => string | null    // trims; empty → null; miss → null
+export const set = (service: string, value: string, opts: SetOpts = {}) => void
+// GetOpts = { exec?, env?, fs? }        SetOpts = GetOpts & { account?: string }
+```
+
+Dispatch by `kind`: `env:VAR` reads the environment (read-only — `set` throws); `file:/path` reads/writes a file (see guards); a plain name goes to the platform adapter picked by `platform()`, throwing a clear error on unsupported platforms.
+
+`file:` guards — `set` writes only at 0600 (`O_EXCL` random temp name, fsync, atomic rename) and refuses a symlink destination or a group/world-writable parent dir without the sticky bit; `get` refuses to read through a symlink whose target isn't owned by the current uid or isn't private (group/world bits set).
+
+- `macos.ts`: `/usr/bin/security` (get: `find-generic-password -s <name> -w`, exit 44 = miss; set: `add-generic-password -U` with the secret on **stdin**, never argv).
+- `linux.ts`: `secret-tool` (get: exit 1 = miss; no binary / no D-Bus secrets service → actionable error naming `env:`/`file:`; set also via stdin). `available({ exec })` probes whether a keyring answers — `init` and `doctor` use it to pick ref forms.
+
+## `src/service/index.ts` (owner: D)
+
+```ts
+export const label = 'dev.barrito.router'
+export const legacy = 'com.tybarho.claude-router'
+export const install = async (o: InstallOpts = {}) => Promise<string>  // ASYNC — await it. returns the rendered unit/plist xml
+export const uninstall = (o: { exec?; dir? } = {}) => void
+export const removeLegacy = (o: { exec?; dir? } = {}) => void           // darwin-only (old claude-router plist); no-op on linux
+export const status = (o: { exec? } = {}) => { running: boolean, pid: number | null }
+export const restart = (o: { exec? } = {}) => void                      // launchd kickstart -k / systemctl --user restart
+// InstallOpts = { bin?, port?, exec?, dir?, node?, pathEnv?, sleep?, user? }
+```
+
+`install` dispatches by `platform()`:
+
+- `launchd.ts` — renders `templates/router.plist` into `~/Library/LaunchAgents/<label>.plist` (atomic), bootout (result ignored — it races bootstrap), settle ~1s, bootstrap.
+- `systemd.ts` — renders `templates/barrito.service` into `~/.config/systemd/user/barrito.service`, `daemon-reload`, `enable --now`. Refuses values systemd can't quote (`"`, `\`, newline; the log path additionally whitespace). No user session bus → error pointing at `barrito serve --detach`. Prints a `loginctl enable-linger <user>` note when linger is off.
+
+Both set `BARRITO_PORT` in the unit env; `serve` reads `process.env.BARRITO_PORT ?? config.port`. The service runs `barrito serve`.
+
+## `src/settings.ts` (owner: D)
+
+```ts
+export const read = (configDir) => ClaudeSettings                  // <configDir>/settings.json, {} if missing
+export const merge = (configDir, fragment) => ClaudeSettings       // deep merge (arrays replaced), atomic write, returns merged
+export const remove = (configDir, keyPaths) => ClaudeSettings      // e.g. ['statusLine', 'env.ANTHROPIC_BASE_URL']
+```
+
+## `src/identity.ts` (owner: C)
+
+```ts
+export const resolve = (cwd, { config, env = process.env, git, cache } = {}) =>
+  ({ id, rule: 'env' | 'remote' | 'path' | 'default', detail })   // detail: remote URL, matched glob, etc.
+export const normalizeRemote = (url) => 'host/owner/repo'         // ssh, https, .git suffix, ports, ssh host aliases, enterprise hosts
+export const glob = (pattern, s) => boolean                       // '*' within one segment, '**' any depth (incl. zero)
+export const git = (args, { cwd } = {}) => string | null
+export const peek = (cwd, opts = {}) => IdentityCacheEntry | null  // warm-cache entry without a git spawn; null when cold
+```
+
+Order: `BARRITO_IDENTITY` → fresh cache entry → git remote owner glob → path glob → `config.default`. `GITHUB_REPOSITORY` (`github.com/<owner>/<repo>`) stands in for the remote when a repo has no origin. Path globs are realpath-adjusted before matching (macOS `/var` vs `/private/var`).
+
+Cache `<state>/which.json`:
+
+```ts
+{ repos: Record<gitToplevel, IdentityCacheEntry>, dirs: Record<dir, gitToplevel> }  // each side capped at 100; legacy flat format migrated on read
+// IdentityCacheEntry = { top, commonDir, configFile, mtimeMs, url, result: Resolution, fp }
+```
+
+An entry is fresh while `fp` (sha over default, GITHUB_REPOSITORY and per-identity match config) matches and the git config file's mtime is unchanged; `dirs` maps subdirectories of a cached repo to its toplevel so warm lookups spawn zero git processes.
+
+## `src/harnesses.ts` (owner: C)
+
+```ts
+export const MARKER = 'generated by barrito'
+export const builtins = { claude, codex, opencode, 'cursor-agent' }   // cursor-agent: aliases ['agent']; see plan "Harnesses"
+export const configFragments = { opencode }  // merged into opencode.json — provider.vercel with baseURL {gateway}/v1/ai and apiKey {env:BARRITO_HANDLE}
+export const find = (name, config) => Harness | null                 // config.harness overrides/extends builtins; resolves aliases
+export const envFor = (harness, identity, { config, keychain, env }) => ({ VAR: 'value' })
+export const realBin = (bin, { path = process.env.PATH, shims = paths.shims, self }) => string | null
+```
+
+Template vars: `{gateway}` = `http://127.0.0.1:<port>/gateway`, `{handle}` = `barrito:<id>`, `{identity}`, `{keychain:<slot>}` (Env level only — `envFor` throws otherwise). Claude (level `full`) env: `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>`, `CLAUDE_CONFIG_DIR=<identity.claude_config_dir>`, `ANTHROPIC_CUSTOM_HEADERS=x-barrito-identity: <id>`, `BARRITO_IDENTITY=<id>`; every level gets `BARRITO_IDENTITY`. Env-level vars already set in the environment are never stomped. Never put a Vercel key in env.
+
+`realBin`: first executable on PATH outside the shims dir — never a barrito shim (marker check) and never ourselves (`--self`).
+
+## `src/router/tiers.ts` (owner: B)
+
+```ts
+export const create = ({ config, statePath, notify, now = Date.now }) => Tiers
+export const label = (config, id) => string   // config.models.labels wins; else bare id, '[…]' stripped, '-' → ' ', upper-cased
+
+tiers.route(identityId, model)
+  // → { to: 'direct' } | { to: 'gateway', model: 'zai/glm-5.3', reason: 'quota' | 'outage' | 'pinned' }
+tiers.observe(identityId, { to, model, status, headers, error })
+  // → { retry: Retry | null }    Retry = { to: 'direct'; delay: number } | { to: 'gateway'; model; reason }
+tiers.pin(identityId, value)      // 'max' | gateway model id (must contain '/') | null — anything else throws
+tiers.snapshot()                 // → { [id]: { tier: 'max'|'fallback'|'pinned', reason, model, since, resetAt, util5h, util7d, pin } }
+```
+
+`observe` on a **direct** hop:
+
+- 2xx → landed: refresh util5h/util7d and the reset; a `limited` status refreshes the quota window without a tier change; otherwise a fallback tier returns to `max` and notifies `<id> — Max is back.`
+- 429 with `limited` (or no allowed status) → quota fallback: chain head, reset from the headers, notify `barrito · <id> — Max spent. Now <Label> on API credits until <HH:MM>.` (once per transition, not per repeat).
+- 429 whose status headers still say `allowed` → RPS blip: one free direct retry `{ to: 'direct', delay }` (delay from `retry-after` when ≤ 5s), no tier change.
+- 529/5xx/connect error → first failure earns one free direct retry; a repeat within 60s opens the outage breaker (notify `barrito · <id> — Anthropic unreachable. Now <Label> on API credits.`), half-open after 60s, backoff ×2 up to 15m.
+
+`observe` on a **gateway** hop (429/5xx/connect): walks to the next chain entry (bare-id match, `[1m]` ignored) — unless a pin is set or the tier isn't `fallback`, in which case the failure surfaces. Chain exhausted → `{ retry: null }` and the next request starts from the head.
+
+Pins override everything: `max` → always direct (quota errors surface), a model → always that model. Rate-limit headers (confirmed): `anthropic-ratelimit-unified-5h-utilization` / `-7d-utilization` (0..1), `-5h-reset` / `-7d-reset` (epoch seconds), `-5h-status` / `-7d-status` (`allowed`|`limited`), `anthropic-ratelimit-unified-status`, `anthropic-ratelimit-unified-reset`, `anthropic-ratelimit-unified-representative-claim`. Reset picking: claim window → limited window (7d wins) → unified-reset → `retry-after` → 5h from now. Must still work from a bare 429 when headers are absent.
+
+State persists to `<statePath>/tiers.json` (tmp + rename); garbage entries drop, unknown keys are kept out. Header keys are lowercase.
+
+`src/router/notify.ts` (owner: B): `export const notify = (title, message, { probe, exec, env, platform, out, err } = {}) => void` — never throws, never blocks (probes synchronously once per binary, then fires detached). `GITHUB_ACTIONS` → `::warning::` (or `::notice::` for "is back") workflow command — data escapes `%`, CR, LF; property values also `:` and `,`. Linux with `DISPLAY`/`WAYLAND_DISPLAY` → `notify-send`. darwin → `terminal-notifier` if on PATH, else `osascript display notification` (escapes `\`, `"`, `\n`, `\r`). Otherwise stderr.
+
+`src/router/spend.ts` (owner: B): `export const create = ({ prices, statePath, now }) => Spend` with `spend.record(identityId, model, usage) → usd` and `spend.today() → { [id]: usd }` (per-day buckets in `<statePath>/spend.json`; a corrupt file is set aside). `prices(modelId) → { input, output, input_cache_read } | null` per-token USD numbers.
+
+## `src/router/server.ts` + `routes.ts` + `gateway.ts` (owner: A)
+
+```ts
+export const start = (opts: StartOpts): http.Server
+// StartOpts = { config: RouterConfig, port, tiers: RouterTiers, spend, keychain, log, upstreams, maxBody? }
+// RouterTiers = Tiers whose snapshot may return partial entries (full Tiers is assignable)
+```
+
+Routes: `GET /health` → `{ ok: true }` · `GET /status` → `{ pid, uptime, identities: tiers.snapshot(), spend: spend.today() }` · `POST /pin` `{ identity, value }` → `tiers.pin` · `/gateway/*` with `Authorization: Bearer barrito:<id>` → reverse proxy to `<gateway>/*` with the identity key (handle swapped; unknown handle → 401 Anthropic-shaped) · everything else is the Claude path, identity from the `x-barrito-identity` header. Unknown/missing identity → 400 `barrito: no identity for this request — run barrito doctor`.
+
+Claude Code gateway hops go to `<gateway>/claude-code` with body model `claude-code/<model>`. Direct hops strip `x-barrito-*` and `x-ai-gateway-api-key`; gateway hops strip `authorization` and set `x-ai-gateway-api-key: Bearer <key>`. Retry the same buffered body on `{ retry }` from `tiers.observe` (only possible before any response bytes were written). Gateway keys per identity via `keychain.get(identity.keychain.gateway)`, cached in memory, busted and re-read once on an upstream 401. Set response header `x-barrito-tier: max` | `fallback:<model>; reason=<r>; reset=<iso>` | `pinned:<model>`. Tee SSE/JSON to extract `usage` (OpenAI names mapped) and call `spend.record`. Log one line per request to `log(line)`: `<iso> <id> <method> <path> <model> → <to> (<reason>) <status> <ms>ms` — never headers or bodies.
+
+## `src/catalog.ts` (owner: E)
+
+```ts
+export const refresh = async ({ fetch, key, statePath, fs, now, write = true }) => CatalogModel[]
+   // GET <gateway>/v1/models (BARRITO_GATEWAY overrides the host), cache to <statePath>/catalog.json
+export const cached = ({ statePath, maxAge = 86400e3, now, fs, stale = false }) => CatalogModel[] | null  // sync read
+export const last = ({ statePath, fs }) => CatalogCache | null   // the cache at any age: { fetchedAt, data } | null
+export const price = (models, id) => { input, output, input_cache_read } | null  // per-token numbers; strips claude-code/ and [1m]
+export const bare = (id) => string             // strip 'claude-code/' prefix and '[1m]' suffix
+```
+
+Catalog entries: `{ id, name, type, tags, context_window, pricing: { input, output, input_cache_read, input_tiers: [{ cost, min?, max? }] } }` (prices are per-token strings).
+
+## `src/models.ts` (owner: E)
+
+```ts
+export const select = (catalog, rules: SelectRules = {}) => Selected[]   // require(tags) → include/exclude/max_input_price → + pin
+   // Selected = { id, name, price, tiers: { threshold, factor } | null }; '[1m]' suffix for ≥1M context without input tiers (rules.suffix overrides)
+export const skipped = (catalog, rules) => Skipped[]                      // pins that exist but fail language/require — { id, why }
+export const render = (selected, config, { catalog, fs, dir }) => { modelPicker: { options: PickerRow[] }, agents: Record<string, string> }
+export const check = (config, catalog) => string[]                        // fallback-chain/agent/pin ids missing from the catalog
+export const sync = async ({ config, catalog, dryRun, all, settings, fs }) => SyncResult
+export const per1m = (n) => string                                         // '$0.55' style per-1M
+```
+
+`SyncResult = { added: string[], removed: Removed[], unchanged: string[], updated: string[], dirs: SyncDir[], missing: string[], protected: string[], skipped: Skipped[] }` — per-dir detail in `dirs: SyncDir[]` (`{ dir, ok, error?, added, removed, unchanged, updated }`); `Removed = { id, reason: 'retired' | 'rules' }`; `protected` lists hand-written agent files never touched; `missing` repeats `check` per catalog. Agent file templates come from `templates/agents/*.md`, model line from `config.models.agents`; a template whose model isn't in the catalog is skipped.
+
+## `src/graft.ts` (owner: F)
+
+```ts
+export const scan = ({ roots, git, fs, state, now }) => ScanEntry[]       // { path, remote, loc, partial? } sorted loc desc; cached per HEAD sha in <state>/graft-scan.json
+export const wired = (repoPath, { fs }) => boolean
+export const wire = (repoPath, { exec, fs, env }) => void                 // graft init --yes --no-global --no-statusline --no-agents --no-build
+export const build = (repoPath, { exec, detached, env, fs, state, now }) => BuildResult
+   // BuildResult = { started: boolean, pid?: number, reason?: 'locked' | 'recent' }
+export const ensure = (cwd, { config, exec, fs, git, state, now }) => void // worktree of a grafted repo with no graft/ → detached build; never blocks
+export const summaries = (repoPath, { config, resolve }) => SummaryEnv | null  // GRAFT_* pointing at {gateway}/v1 with the repo's identity handle
+export const run = (cmd, opts?) => string | Child   // sync stdout, or the spawned child when opts.detached — overload signature in types.ts
+export const runGit = (args, opts?) => string
+```
+
+A detached build stamps `<state>/graft-build/<sha1(repoPath)>.json` (`{ pid, startedAt }`): a live pid means `locked`, a stamp younger than 10 minutes means `recent` — the backoff that keeps a broken build from respawning on every shim launch.
+
+## CLI
+
+`bin/barrito.ts` is the dispatcher: the command list is the keys of `src/usage.ts`; `<command> --help` prints that entry **before** the config load or the command import; `--version` reads `package.json` via `root()`.
+
+Commands other than `init` are `src/cli/<name>.ts` exporting `default async (argv, ctx: CommandCtx) => Promise<void>`, where `CommandCtx = { config: Config, print, exit: (code) => void }` — bin loads the config before dispatch. `init` gets the loose `Ctx = { config: Config | null, print, exit: (code) => never }` because it may be creating the config. Parse args with `node:util` `parseArgs`. Owners:
+
+- C: `which`, `env`, `exec`, `shim`
+- E: `models`
+- F: `graft`
+- G: `status`, `doctor`, `pin`, `unpin`, `logs`, `serve`, `stop`, `ci`, `statusline`, `uninstall`, slash command `templates/barrito-command.md`
+- H: `init`
+
+Exports the tests script against:
+
+- `serve`: `startDetached(o: DetachOpts) → { pid, port, existing }`, `stopDetached(o: StopOpts) → boolean`. Pidfile `<statePath>/barrito.pid` (JSON `{ pid, port, startedAt, token }`); only a pid proven via `GET /status` answering with that pid is ever signalled (SIGTERM ≤3s, SIGKILL, drop the pidfile); stale or foreign pidfiles are cleaned, never signalled. `DetachOpts.env` merges extra env into the child (how `ci` points the router at RUNNER_TEMP).
+- `shim`: `writeShims({ config, harnesses, dir, force, bin, node, print }) → { written: string[], refused: string[] }` — refuses files not generated by barrito unless `force`; aliases become symlinks; 0o755. `ShimCtx = CommandCtx & { bin?, node? }`.
+- `status`: `port`, `base`, `fetchJson`, `postJson` (abort-raced), `parse`, `table`, `markdown` (GFM cells escape pipes and backticks, newlines collapse to spaces; appends a ⚠ line per fallback identity), `nudges`.
+- `doctor`: `diagnose(config, opts) → DoctorCheck[]` — a `GITHUB_ACTIONS` branch (PATH/shims, `BARRITO_PORT`, `BARRITO_IDENTITY`, `/health`, env:/file: readability), linux bits (linger, rc PATH line, keyring availability), host staleness (emdash/conductor started before the shims install).
+- `ci`: `flags(argv)` (identity/gateway-key/fallback/port/config/stop), `build(flags) → ConfigInput` (gateway keys must be `env:`/`file:` — CI has no keyring), `envLines`. Writes `$GITHUB_PATH`/`$GITHUB_ENV` with newline guards (nothing is written before every check passes), starts the router detached under `$RUNNER_TEMP`, waits for `/health`, prints a `::notice` when `CLAUDE_CODE_OAUTH_TOKEN` is absent. `ci stop` writes `status --markdown` to `$GITHUB_STEP_SUMMARY` and tears down — warnings only, never a failed job.
+- `init`: `Prompts` (injectable), `Io` (the outside world), `viaNpx(script, env)`. `--yes` takes every default; `--dry-run` writes nothing (cold catalog fetch goes through a no-write fs). Identities loop on "Add another identity?"; no keyring → `env:` refs; PATH block written via `src/detect.ts` `rcOf` (zsh/bash/fish), wrapped in `# >>> barrito >>>` markers that `uninstall` removes whole.
+
+`templates/shim.sh` (owner: C) — `__BARRITO__` bakes absolute node + barrito paths at generation time, `__HARNESS__` the harness name:
+
+```bash
+#!/usr/bin/env bash
+# generated by barrito — do not edit; run `barrito shim` to regenerate
+eval "$(__BARRITO__ env --shell --harness __HARNESS__ --self "$0")" || exit $?
+[ -n "${BARRITO_REAL_BIN:-}" ] || exit 127
+exec "$BARRITO_REAL_BIN" "$@"
+```

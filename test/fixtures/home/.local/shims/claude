@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# claude shim: per-directory Vercel AI Gateway header for Claude Code.
+set -euo pipefail
+. "$(dirname "$0")/_ai-gateway-env.sh"
+exec /usr/local/bin/claude "$@"

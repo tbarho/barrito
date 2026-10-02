@@ -1,0 +1,1030 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>barrito — one router, every identity</title>
+<meta name="description" content="barrito is a local router and CLI that gives every coding agent the right identity per repo. Your Claude Max plan when it's there, cheap gateway models when it's not, and you always know which.">
+<meta name="color-scheme" content="dark">
+<meta property="og:title" content="barrito — one router, every identity">
+<meta property="og:description" content="One local router, every identity. Your Claude Max plan when it's there, cheap models when it's not, and you always know which.">
+<meta property="og:image" content="assets/logo-512.png">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="barrito — one router, every identity">
+<meta name="twitter:description" content="One local router, every identity. Your Claude Max plan when it's there, cheap models when it's not, and you always know which.">
+<meta name="twitter:image" content="assets/logo-512.png">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/logo-32.png">
+<link rel="icon" type="image/png" sizes="64x64" href="assets/logo-64.png">
+<link rel="apple-touch-icon" href="assets/logo-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@1,9..144,600&display=swap">
+<style>
+:root{
+  --bg:#131210;--panel:#1a1817;--code:#191815;--line:#35322b;--line-2:#4a463d;
+  --ink:#f7f5ef;--dim:#b3ac9f;--faint:#8f887b;
+  --orange:#ff8001;--orange-2:#ff962c;--green:#7ed37a;--warn:#e8938f;
+  --cream:#f2e8d5;--cream-ink:#161310;
+  --sans:"Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"DM Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --funky:"Fraunces",Georgia,serif;
+  --max:1100px;--gut:24px;--r:8px;--r-sm:6px;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:76px}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:clip}
+a{color:inherit;text-decoration:none}
+code,pre,kbd{font-family:var(--mono)}
+::selection{background:var(--orange);color:#131210}
+:focus-visible{outline:2px solid var(--orange);outline-offset:2px;border-radius:4px}
+
+.wrap{max-width:var(--max);margin:0 auto;padding:0 var(--gut)}
+section{padding:104px 0;border-top:1px solid var(--line)}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin:0 0 18px;font-weight:400}
+.eyebrow .no{color:var(--orange);margin-right:10px}
+.head{margin-bottom:52px}
+.head .eyebrow{display:flex;align-items:center;gap:14px}
+.head .eyebrow::after{content:"";flex:1;height:1px;background:var(--line)}
+h1,h2,h3{font-weight:400;margin:0;color:var(--ink);letter-spacing:-.03em}
+h1{font-size:clamp(40px,6vw,68px);line-height:1.05;letter-spacing:-0.04em;text-wrap:balance}
+h2{font-size:clamp(30px,4vw,44px);line-height:1.1;max-width:22ch;text-wrap:balance}
+h3{font-size:21px;line-height:1.3;letter-spacing:-.02em}
+.funky{font-family:var(--funky);font-style:italic;font-weight:600;letter-spacing:-.01em;color:var(--orange)}
+.lead{color:var(--dim);font-size:17.5px;line-height:1.6;max-width:58ch;margin:18px 0 0;text-wrap:pretty}
+.muted{color:var(--dim)}
+.ic{font-family:var(--mono);font-size:.85em;background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:1px 6px;white-space:nowrap}
+
+/* reveal on scroll (tester.army pattern) */
+.rv{opacity:0;transform:translateY(14px);transition:opacity .5s ease-out,transform .5s ease-out}
+.rv.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){.rv{opacity:1;transform:none;transition:none}}
+
+/* nav */
+.nav{position:sticky;top:0;z-index:20;background:rgba(19,18,16,.84);backdrop-filter:saturate(160%) blur(12px);-webkit-backdrop-filter:saturate(160%) blur(12px);border-bottom:1px solid var(--line)}
+.nav .wrap{display:flex;align-items:center;gap:28px;height:64px}
+.mark{font-family:var(--mono);font-weight:500;font-size:15.5px;letter-spacing:-.02em;display:inline-flex;align-items:center;gap:9px;color:var(--ink)}
+.mark img{width:26px;height:26px;flex:none}
+.nav ul{display:flex;gap:2px;list-style:none;margin:0;padding:0;flex:1}
+.nav ul a{display:block;font-size:14px;color:var(--dim);padding:6px 10px;border-radius:var(--r-sm);transition:color .15s,background .15s}
+.nav ul a:hover{color:var(--ink);background:rgba(255,255,255,.04)}
+.nav .gh{font-size:14px;display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--panel);padding:6px 14px;border-radius:var(--r-sm);color:var(--dim);transition:border-color .15s,color .15s}
+.nav .gh:hover{border-color:var(--line-2);color:var(--ink)}
+.nav .gh svg{width:16px;height:16px}
+@media (max-width:1000px){.nav ul{display:none}.nav .wrap{justify-content:space-between}}
+
+/* buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:44px;padding:0 20px;font-size:15px;font-weight:500;border-radius:var(--r-sm);border:1px solid var(--line-2);background:var(--panel);color:var(--ink);transition:background .15s,border-color .15s;white-space:nowrap}
+.btn:hover{border-color:var(--orange);background:#221e18}
+.btn.primary{background:var(--orange);color:#131210;border-color:var(--orange);border-radius:100px;padding:0 24px}
+.btn.primary:hover{background:var(--orange-2);border-color:var(--orange-2)}
+.btn svg{width:16px;height:16px}
+.btn .arr{transition:transform .2s}
+.btn:hover .arr{transform:translateX(2px)}
+
+/* hero */
+.hero{padding:112px 0 88px;border-top:0;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0;background-image:radial-gradient(rgba(255,128,1,.14) 1px,transparent 1px);background-size:26px 26px;background-position:50% 0;-webkit-mask-image:radial-gradient(ellipse 80% 68% at 50% 0%,#000 18%,transparent 70%);mask-image:radial-gradient(ellipse 80% 68% at 50% 0%,#000 18%,transparent 70%);pointer-events:none}
+.hero .wrap{position:relative;text-align:center;display:flex;flex-direction:column;align-items:center}
+.hero h1{max-width:14ch;margin:26px auto 0}
+.hero .sub{font-size:clamp(17px,2.1vw,20px);color:var(--dim);max-width:46ch;margin:22px auto 0;line-height:1.55;text-wrap:balance}
+.ctas{display:flex;gap:12px;margin-top:34px;flex-wrap:wrap;justify-content:center}
+
+@keyframes rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+.hero .wrap>*{opacity:0;animation:rise .6s cubic-bezier(.2,.65,.25,1) forwards}
+.hero .wrap>*:nth-child(2){animation-delay:.06s}
+.hero .wrap>*:nth-child(3){animation-delay:.12s}
+.hero .wrap>*:nth-child(4){animation-delay:.18s}
+.hero .wrap>*:nth-child(5){animation-delay:.24s}
+.hero .wrap>*:nth-child(6){animation-delay:.3s}
+.hero .wrap>*:nth-child(7){animation-delay:.36s}
+.hero .wrap>*:nth-child(8){animation-delay:.42s}
+@media (prefers-reduced-motion:reduce){.hero .wrap>*{animation:none;opacity:1}}
+
+/* burrito character + sticker */
+.logow{position:relative;margin:0}
+.logo{display:block;width:clamp(108px,17vw,168px);height:auto;animation:bfloat 6s ease-in-out infinite;transition:transform .45s cubic-bezier(.2,.65,.25,1)}
+.logo:hover{transform:rotate(-5deg) scale(1.05)}
+@keyframes bfloat{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-8px) rotate(2deg)}}
+@media (prefers-reduced-motion:reduce){.logo{animation:none;transition:none}.logo:hover{transform:none}}
+.sticker{position:absolute;top:-16px;right:-56px;transform:rotate(7deg);background:var(--cream);color:var(--cream-ink);border-radius:4px;padding:9px 12px;box-shadow:2px 3px 0 rgba(0,0,0,.35);animation:swing 5s ease-in-out infinite;transform-origin:0 100%}
+.sticker b{display:block;font-family:var(--mono);font-size:12px;font-weight:500;letter-spacing:.05em;text-transform:uppercase;line-height:1.25}
+.sticker span{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:#6b5f4a;margin-top:3px}
+.sticker::before{content:"";position:absolute;left:6px;right:6px;top:-3px;height:2px;background:rgba(22,19,16,.18);border-radius:2px}
+@keyframes swing{0%,100%{transform:rotate(7deg)}50%{transform:rotate(3deg)}}
+@media (prefers-reduced-motion:reduce){.sticker{animation:none}}
+@media (max-width:640px){.sticker{right:-14px;top:-30px}}
+@media (max-width:480px){.sticker{right:-26px;top:-34px;padding:6px 8px}.sticker b{font-size:10px}.sticker span{font-size:8.5px;margin-top:2px}}
+
+.badge{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);font-weight:400;background:var(--panel);border:1px solid var(--line);border-radius:100px;padding:7px 14px 7px 11px;margin:34px 0 0}
+.badge i{width:6px;height:6px;border-radius:50%;background:var(--orange);display:block}
+
+/* install card */
+.install{width:100%;max-width:580px;margin-top:52px;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:var(--r)}
+.plat-line{margin:20px 0 0;font-family:var(--mono);font-size:13px;color:var(--faint);text-align:center}
+.tabs{display:flex;border-bottom:1px solid var(--line);padding:0 6px;overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{appearance:none;background:none;border:0;font:400 13.5px/1 var(--sans);color:var(--faint);padding:13px 12px 12px;cursor:pointer;position:relative;white-space:nowrap}
+.tab:hover{color:var(--dim)}
+.tab[aria-selected="true"]{color:var(--ink)}
+.tab[aria-selected="true"]::after{content:"";position:absolute;left:12px;right:12px;bottom:-1px;height:1px;background:var(--orange)}
+.cmd{display:flex;align-items:center;gap:12px;padding:15px 14px 15px 18px}
+.cmd[hidden]{display:none}
+.cmd code{flex:1;min-width:0;font-size:14px;overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.cmd code::-webkit-scrollbar{display:none}
+.cmd code .p{color:var(--faint);user-select:none;margin-right:10px}
+.copy{appearance:none;flex:none;width:32px;height:32px;display:grid;place-items:center;border:1px solid var(--line);background:var(--code);border-radius:var(--r-sm);color:var(--dim);cursor:pointer;transition:color .15s,border-color .15s}
+.copy:hover{color:var(--ink);border-color:var(--line-2)}
+.copy svg{width:15px;height:15px}
+.copy .ok{display:none}
+.copy.done .ok{display:block}
+.copy.done .cp{display:none}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:0;margin-top:52px;width:100%;max-width:720px;border:1px solid var(--line);border-radius:var(--r);background:var(--panel)}
+.stats div{padding:20px 16px;text-align:center}
+.stats div+div{border-left:1px solid var(--line)}
+.stats b{display:block;font-family:var(--mono);font-size:21px;font-weight:500;letter-spacing:-.03em;color:var(--ink)}
+.stats span{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}
+</style>
+<style>
+/* harness marquee (freebirds tag strip) */
+.marquee{padding:22px 0;border-top:1px solid var(--line);overflow:hidden;-webkit-mask-image:linear-gradient(90deg,transparent,#000 10%,#000 90%,transparent);mask-image:linear-gradient(90deg,transparent,#000 10%,#000 90%,transparent)}
+.mq-track{display:flex;gap:0;width:max-content;animation:mq 34s linear infinite}
+.mq-track span{font-family:var(--mono);font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);padding:0 22px;white-space:nowrap;flex:none}
+.mq-track b{color:var(--ink);font-weight:400}
+.mq-track i{color:var(--orange);font-style:normal}
+@keyframes mq{to{transform:translateX(-50%)}}
+@media (prefers-reduced-motion:reduce){.mq-track{animation:none}}
+
+/* terminal */
+.term{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.term-bar{display:flex;align-items:center;gap:12px;padding:0 14px;height:42px;border-bottom:1px solid var(--line)}
+.dots{display:flex;gap:6px}
+.dots i{width:10px;height:10px;border-radius:50%;border:1px solid var(--line-2);display:block}
+.term-bar .t{flex:1;text-align:center;font-family:var(--mono);font-size:12px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.term-bar button{appearance:none;background:none;border:1px solid var(--line);border-radius:var(--r-sm);font:400 12px/1 var(--mono);color:var(--dim);padding:6px 9px;cursor:pointer}
+.term-bar button:hover{color:var(--ink);border-color:var(--line-2)}
+.term pre{margin:0;padding:22px 24px;font-size:13.5px;line-height:1.7;overflow-x:auto;background:var(--code);color:var(--ink);min-height:2em}
+.term pre .d{color:var(--faint)}
+.term pre .m{color:var(--dim)}
+.term pre .ok{color:var(--green)}
+.term pre .warn{color:var(--warn)}
+.term pre b{color:var(--orange);font-weight:400}
+.caret{display:inline-block;width:.6em;height:1.1em;background:var(--orange);vertical-align:-2px;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+@media (prefers-reduced-motion:reduce){.caret{animation:none}}
+.demo{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.9fr);gap:56px;align-items:start}
+.notes{list-style:none;padding:0;margin:32px 0 0;display:grid;gap:0}
+.notes li{padding:14px 0;border-top:1px solid var(--line);font-size:15px;color:var(--dim)}
+.notes li b{display:block;color:var(--ink);font-weight:500;font-size:15px}
+@media (max-width:900px){.demo{grid-template-columns:minmax(0,1fr);gap:40px}}
+
+/* how */
+.diagram{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:40px 32px}
+.diagram svg{display:block;width:100%;height:auto}
+.diagram .v{display:none;max-width:360px;margin:0 auto}
+@media (max-width:720px){.diagram{padding:28px 16px}.diagram .h{display:none}.diagram .v{display:block}}
+.flow{stroke-dasharray:6 5;animation:dash 1.4s linear infinite}
+@keyframes dash{to{stroke-dashoffset:-22}}
+@media (prefers-reduced-motion:reduce){.flow{animation:none}}
+.steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin-top:48px;border-top:1px solid var(--line)}
+.step{padding:28px 28px 0 0}
+.step+.step{padding-left:28px;border-left:1px solid var(--line)}
+.step .n{font-family:var(--mono);font-size:12px;color:var(--orange);letter-spacing:.08em}
+.step h3{margin:14px 0 8px;font-size:18px}
+.step p{margin:0;color:var(--dim);font-size:15px}
+@media (max-width:760px){.steps{grid-template-columns:minmax(0,1fr)}.step,.step+.step{padding:24px 0;border-left:0}.step+.step{border-top:1px solid var(--line)}}
+
+/* features — bento */
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.card{background:var(--panel);padding:28px;transition:background .2s}
+.card:hover{background:#1d1b19}
+.card.span2{grid-column:span 2}
+.glyph{width:34px;height:34px;border:1px solid var(--line);border-radius:var(--r-sm);display:grid;place-items:center;background:var(--code);margin-bottom:20px}
+.glyph svg{width:16px;height:16px}
+.card h3{font-size:17px;margin-bottom:8px;letter-spacing:-.015em}
+.card p{margin:0;color:var(--dim);font-size:15px}
+.card p+p{margin-top:10px}
+@media (max-width:900px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:600px){.grid{grid-template-columns:minmax(0,1fr)}.card.span2{grid-column:auto}.card{padding:24px 20px}}
+
+/* tables */
+.tbl{border:1px solid var(--line);border-radius:var(--r);background:var(--panel);overflow:hidden}
+.tbl table{width:100%;border-collapse:collapse;font-size:15px}
+.tbl th{text-align:left;font:400 11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--faint);padding:16px 24px;border-bottom:1px solid var(--line);background:var(--code)}
+.tbl td{padding:22px 24px;border-bottom:1px solid var(--line);vertical-align:top;color:var(--dim)}
+.tbl tr:last-child td{border-bottom:0}
+.tbl td:first-child{width:220px;color:var(--ink)}
+.tbl td:last-child{width:26%}
+.tbl.plat td:last-child{width:auto}
+.lvl{display:inline-block;font:400 12px/1 var(--mono);border:1px solid var(--line-2);border-radius:var(--r-sm);padding:5px 8px;color:var(--dim)}
+.lvl.full{background:var(--orange);color:#131210;border-color:var(--orange)}
+@media (max-width:720px){
+  .tbl thead{display:none}
+  .tbl tr{display:block;padding:20px;border-bottom:1px solid var(--line)}
+  .tbl tr:last-child{border-bottom:0}
+  .tbl td{display:block;padding:0;border:0;width:auto!important}
+  .tbl td:nth-child(2){margin:12px 0 4px;font-weight:500}
+  .tbl td:last-child{margin-top:4px;width:auto!important}
+}
+.custom{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:48px;margin-top:64px;align-items:center}
+.custom p{color:var(--dim);margin:12px 0 0}
+.stack{display:grid;gap:12px;align-content:center}
+@media (max-width:860px){.custom{grid-template-columns:minmax(0,1fr);gap:28px}}
+
+.code{background:var(--code);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.code .lbl{display:flex;justify-content:space-between;align-items:center;font:400 11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--faint);padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+.code pre{margin:0;padding:16px 18px;font-size:13px;line-height:1.7;overflow-x:auto;color:var(--ink)}
+.code pre .d{color:var(--faint)}
+.code pre .m{color:var(--dim)}
+.code pre .ok{color:var(--green)}
+.code pre .warn{color:var(--warn)}
+
+/* cli */
+.cli{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.cli .wide{grid-column:1/-1}
+@media (max-width:860px){.cli{grid-template-columns:minmax(0,1fr)}}
+.status{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin-top:16px}
+@media (max-width:860px){.status{grid-template-columns:minmax(0,1fr)}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:24px}
+.panel .eyebrow{font-size:11px;color:var(--faint);margin-bottom:16px}
+.pills{display:flex;flex-direction:column;align-items:flex-start;gap:10px}
+.pill{font:400 12.5px/1 var(--mono);border:1px solid var(--line);background:var(--code);border-radius:var(--r-sm);padding:9px 11px;max-width:100%;overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.pill.warn{border-color:var(--orange);color:var(--ink)}
+.pill .s{color:var(--faint);margin:0 2px}
+.notif{display:flex;gap:14px;align-items:flex-start;border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;background:var(--code)}
+.notif .ico{flex:none;width:32px;height:32px;border-radius:7px;background:var(--orange);display:grid;place-items:center;color:#131210}
+.notif .ico svg{width:16px;height:16px}
+.notif b{display:block;font-size:13px;font-weight:500}
+.notif span{font-size:13.5px;color:var(--dim);line-height:1.5}
+.notif small{display:block;font-family:var(--mono);font-size:11px;color:var(--faint);margin-top:6px}
+
+/* compliance */
+.comp{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:24px}
+@media (max-width:860px){.comp{grid-template-columns:minmax(0,1fr)}}
+.rules{list-style:none;margin:0;padding:0;background:var(--panel);border:1px solid var(--line);border-radius:var(--r)}
+.rules li{display:grid;grid-template-columns:28px minmax(0,1fr);gap:12px;padding:24px;border-bottom:1px solid var(--line);color:var(--dim);font-size:15.5px}
+.rules li:last-child{border-bottom:0}
+.rules .n{font-family:var(--mono);font-size:12px;color:var(--orange);padding-top:3px}
+.rules strong{color:var(--ink);font-weight:500}
+.wont{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:24px;position:relative}
+.wont .eyebrow{font-size:11px;color:var(--faint)}
+.wont ul{list-style:none;margin:0;padding:0}
+.wont li{display:flex;gap:12px;align-items:baseline;padding:12px 0;border-top:1px solid var(--line);font-size:15px}
+.wont li:first-child{border-top:0}
+.wont li::before{content:"✗";font-family:var(--mono);color:var(--warn);font-size:13px}
+.wont .tag{position:absolute;top:-13px;right:18px;transform:rotate(-3deg);background:var(--cream);color:var(--cream-ink);border-radius:4px;padding:5px 9px;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;box-shadow:2px 2px 0 rgba(0,0,0,.35)}
+
+/* faq */
+.faq{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:56px}
+@media (max-width:860px){.faq{grid-template-columns:minmax(0,1fr);gap:32px}}
+.qs{border-top:1px solid var(--line)}
+details{border-bottom:1px solid var(--line)}
+summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:16px;padding:20px 0;font-weight:500;font-size:16.5px;letter-spacing:-.01em}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"+";flex:none;font-family:var(--mono);font-size:19px;line-height:1;color:var(--faint);transition:color .15s}
+summary:hover::after{color:var(--orange)}
+details[open] summary::after{content:"\2212";color:var(--orange)}
+details p{margin:0 0 22px;color:var(--dim);max-width:62ch;font-size:15.5px}
+
+/* cta */
+.final{text-align:center}
+.final .eyebrow{justify-content:center}
+.final h2{margin:0 auto;max-width:16ch}
+.final .lead{margin:20px auto 0}
+.final .ctas{margin-top:32px}
+
+/* footer */
+footer{border-top:1px solid var(--line);padding:56px 0 40px}
+.f-top{display:flex;flex-wrap:wrap;gap:32px 64px;align-items:flex-start;justify-content:space-between}
+.f-top .about{max-width:34ch;font-size:14.5px;color:var(--dim);margin:14px 0 0}
+footer nav{display:flex;flex-wrap:wrap;gap:8px 28px;font-size:14px;color:var(--dim)}
+footer nav a:hover{color:var(--orange)}
+.f-bot{display:flex;flex-wrap:wrap;gap:10px 28px;align-items:center;margin-top:44px;padding-top:20px;border-top:1px solid var(--line);font-family:var(--mono);font-size:12px;color:var(--faint)}
+.f-bot .sp{flex:1}
+.f-bot .host{display:inline-flex;align-items:center;gap:8px}
+.f-bot .host i{width:6px;height:6px;border-radius:50%;background:var(--green);display:block}
+
+@media (max-width:600px){
+  :root{--gut:16px}
+  section{padding:72px 0}
+  .hero{padding:80px 0 64px}
+  .head{margin-bottom:36px}
+  .lead{font-size:16.5px}
+  .ctas{width:100%}
+  .ctas .btn{flex:1 1 auto}
+  .stats b{font-size:19px}
+  .stats div{padding:16px 8px}
+  .term pre{padding:18px 16px;font-size:12.5px}
+  .code pre{padding:14px 16px}
+  footer{padding:44px 0 32px}
+}
+</style>
+</head>
+<body>
+<header class="nav">
+  <div class="wrap">
+    <a class="mark" href="#top" aria-label="barrito home">
+      <img src="assets/logo-64.png" width="26" height="26" alt="" decoding="async">
+      barrito
+    </a>
+    <ul>
+      <li><a href="#setup">Setup</a></li>
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#features">Features</a></li>
+      <li><a href="#harnesses">Harnesses</a></li>
+      <li><a href="#fallback">When Max runs out</a></li>
+      <li><a href="#ci">CI</a></li>
+      <li><a href="#faq">FAQ</a></li>
+    </ul>
+    <a class="gh" href="https://github.com/tbarho/barrito">
+      <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      GitHub
+    </a>
+  </div>
+</header>
+<main id="top">
+<!-- HERO -->
+<section class="hero">
+  <div class="wrap">
+    <div class="logow">
+      <img class="logo" src="assets/logo-512.png" width="512" height="512" alt="barrito cartoon burrito mascot" decoding="async" fetchpriority="high">
+      <span class="sticker" aria-hidden="true"><b>Stay stuffed</b><span>max ↺ cheap</span></span>
+    </div>
+    <h1>One router. <span class="funky">Every identity.</span></h1>
+    <p class="sub">Your Claude Max plan when it's there. Cheap models when it's not. And you always know which.</p>
+    <div class="ctas">
+      <a class="btn primary" href="#setup">Get started</a>
+      <a class="btn" href="plan.html">Launch plan</a>
+    </div>
+
+    <div class="install">
+      <div class="tabs" role="tablist" aria-label="Install method">
+        <button class="tab" role="tab" id="t-npx" aria-controls="p-npx" aria-selected="true">npx</button>
+        <button class="tab" role="tab" id="t-brew" aria-controls="p-brew" aria-selected="false" tabindex="-1">Homebrew</button>
+        <button class="tab" role="tab" id="t-yarn" aria-controls="p-yarn" aria-selected="false" tabindex="-1">yarn</button>
+      </div>
+      <div class="cmd" role="tabpanel" id="p-npx" aria-labelledby="t-npx">
+        <code><span class="p">$</span>npx barrito init</code>
+        <button class="copy" data-copy="npx barrito init" aria-label="Copy command"><svg class="cp" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"/></svg><svg class="ok" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 8.5l3 3 7-7"/></svg></button>
+      </div>
+      <div class="cmd" role="tabpanel" id="p-brew" aria-labelledby="t-brew" hidden>
+        <code><span class="p">$</span>brew install tbarho/tap/barrito</code>
+        <button class="copy" data-copy="brew install tbarho/tap/barrito" aria-label="Copy command"><svg class="cp" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"/></svg><svg class="ok" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 8.5l3 3 7-7"/></svg></button>
+      </div>
+      <div class="cmd" role="tabpanel" id="p-yarn" aria-labelledby="t-yarn" hidden>
+        <code><span class="p">$</span>yarn global add barrito</code>
+        <button class="copy" data-copy="yarn global add barrito" aria-label="Copy command"><svg class="cp" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"/></svg><svg class="ok" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 8.5l3 3 7-7"/></svg></button>
+      </div>
+      <p class="plat-line">macOS · Linux · GitHub Actions · Docker</p>
+    </div>
+
+    <div class="stats">
+      <div><b>127.0.0.1:4141</b><span>one local endpoint</span></div>
+      <div><b>3</b><span>harness levels</span></div>
+      <div><b>any</b><span>number of identities</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- MARQUEE -->
+<div class="marquee" aria-hidden="true">
+  <div class="mq-track">
+    <span><b>Claude Code</b><i> ✦ </i>Codex<i> ✦ </i>OpenCode<i> ✦ </i>cursor-agent<i> ✦ </i>AI SDK apps<i> ✦ </i>your own bot<i> ✦ </i>emdash<i> ✦ </i>Conductor<i> ✦ </i>tmux<i> ✦ </i></span>
+    <span><b>Claude Code</b><i> ✦ </i>Codex<i> ✦ </i>OpenCode<i> ✦ </i>cursor-agent<i> ✦ </i>AI SDK apps<i> ✦ </i>your own bot<i> ✦ </i>emdash<i> ✦ </i>Conductor<i> ✦ </i>tmux<i> ✦ </i></span>
+  </div>
+</div>
+
+<!-- SETUP DEMO -->
+<section id="setup">
+  <div class="wrap demo">
+    <div>
+      <p class="eyebrow"><span class="no">01</span> Setup</p>
+      <h2>One command finds everything.</h2>
+      <p class="lead">Init detects your agents and hosts, adopts what you already run, maps identities to remotes and paths, and leaves you a working router.</p>
+      <ul class="notes">
+        <li><b>Adopts, doesn't clobber</b>Existing routers, shims and <span class="ic">.envrc</span> links are backed up first.</li>
+        <li><b>Any number of identities</b>Start from your config or the two built-in defaults; init keeps asking "Add another identity?" until you say stop.</li>
+        <li><b>Ends with a check</b><span class="ic">barrito doctor</span> tells you what's left.</li>
+      </ul>
+    </div>
+    <div class="term">
+      <div class="term-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="t">~/Code — zsh</span><button type="button" id="replay" aria-label="Replay init demo">replay</button></div>
+<pre id="demo" aria-label="barrito init output"><span class="d">$</span> npx barrito init
+
+  <b>barrito</b> v1.0.0 <span class="d">· one router, every identity</span>
+
+  ◇  Agents found
+  <span class="d">│</span>  claude 2.1.287 · codex 0.61 · opencode 1.4 · cursor-agent 2026.09
+  <span class="d">│</span>
+  ◇  Existing setup found
+  <span class="d">│</span>  claude-router (launchd :4141) · 3 shims · 5 .envrc links
+  <span class="d">│</span>  <span class="m">back up and replace?</span> Yes
+  <span class="d">│</span>
+  ◇  Identity · work
+  <span class="d">│</span>  <span class="m">match</span>    github.com/acme/*  ~/Code/acme/**
+  <span class="d">│</span>  <span class="m">claude</span>   ~/.claude-work  <span class="ok">✓ Max</span>
+  <span class="d">│</span>  <span class="m">gateway</span>  keychain "Vercel AI Gateway Work"  <span class="ok">✓</span>
+  <span class="d">│</span>
+  ◇  Identity · personal (default)
+  <span class="d">│</span>  <span class="m">match</span>    github.com/you/*  ~/Code/personal/**
+  <span class="d">│</span>  <span class="m">claude</span>   ~/.claude-personal  <span class="warn">✗ not logged in → login now?</span> Yes
+  <span class="d">│</span>  <span class="m">gateway</span>  keychain "Vercel AI Gateway Personal"  <span class="ok">✓</span>
+  <span class="d">│</span>
+  ◇  When Max runs out
+  <span class="d">│</span>  ● cheap first, loudly   glm-5.3 → deepseek-v4.1-flash
+  <span class="d">│</span>
+  ◇  Graft which repos?  <span class="m">(ranked by size)</span>
+  <span class="d">│</span>  ◼ acme/api             412k loc
+  <span class="d">│</span>  ◼ acme/web             188k loc
+  <span class="d">│</span>  <span class="m">◻ personal/side-project  96k loc</span>
+  <span class="d">│</span>
+  <span class="d">└</span>  Wrote config, 4 shims, router service, statusline. Next: <b>barrito doctor</b></pre>
+    </div>
+  </div>
+</section>
+<!-- HOW -->
+<section id="how">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow"><span class="no">02</span> How it works</p>
+      <h2>Resolved at exec. Routed on <span class="funky">localhost.</span></h2>
+      <p class="lead">Every agent binary is a shim. The shim decides who you are for this repo, then hands off to one router that knows where that identity's traffic belongs.</p>
+    </div>
+
+    <div class="diagram" role="img" aria-label="Agent to shim to barrito router on port 4141, which routes Claude Code with Max directly to api.anthropic.com, and fallback or other harnesses to Vercel AI Gateway with the identity's key.">
+      <svg class="h" viewBox="0 0 1000 340" aria-hidden="true">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 1L9 5L0 9" fill="none" stroke="#8f887b" stroke-width="1.4"/></marker>
+        </defs>
+        <g fill="#1a1817" stroke="#4a463d">
+          <rect x="1" y="124" width="190" height="92" rx="8"/>
+          <rect x="241" y="124" width="200" height="92" rx="8"/>
+          <rect x="491" y="124" width="190" height="92" rx="8" fill="#ff8001" stroke="#ff8001"/>
+          <rect x="719" y="28" width="280" height="104" rx="8"/>
+          <rect x="719" y="208" width="280" height="104" rx="8"/>
+        </g>
+        <g fill="none" stroke="#8f887b" stroke-width="1.2">
+          <path d="M191 170H237" marker-end="url(#ah)"/>
+          <path d="M441 170H487" marker-end="url(#ah)"/>
+          <path d="M681 160C702 160 702 80 715 80" marker-end="url(#ah)"/>
+          <path d="M681 180C702 180 702 260 715 260" marker-end="url(#ah)" stroke-dasharray="4 4"/>
+        </g>
+        <g fill="none" stroke="#ff8001" stroke-width="1.2">
+          <path class="flow" d="M191 170H237"/>
+          <path class="flow" d="M441 170H487"/>
+          <path class="flow" d="M681 160C702 160 702 80 715 80"/>
+        </g>
+        <g font-family="DM Mono, monospace" font-size="11" letter-spacing=".9" fill="#8f887b">
+          <text x="21" y="150">AGENT</text>
+          <text x="261" y="150">SHIM</text>
+          <text x="511" y="150" fill="#131210">ROUTER</text>
+          <text x="739" y="54">A · DIRECT</text>
+          <text x="739" y="234">B · GATEWAY</text>
+        </g>
+        <g font-size="16" font-weight="500" fill="#f7f5ef" letter-spacing="-.2">
+          <text x="21" y="176">claude · codex</text>
+          <text x="261" y="176">resolve identity</text>
+          <text x="511" y="176" fill="#131210" font-family="DM Mono, monospace" font-size="15">barrito :4141</text>
+          <text x="739" y="82">api.anthropic.com</text>
+          <text x="739" y="262">Vercel AI Gateway</text>
+        </g>
+        <g font-size="12.5" fill="#b3ac9f">
+          <text x="21" y="198">opencode · custom</text>
+          <text x="261" y="198" font-family="DM Mono, monospace" font-size="11">env → remote → path → default</text>
+          <text x="511" y="198" fill="#6b3347" font-family="DM Mono, monospace">127.0.0.1 · keychain</text>
+          <text x="739" y="104">Claude Code + Max</text>
+          <text x="739" y="121">OAuth untouched</text>
+          <text x="739" y="284">Fallback + other harnesses · identity key</text>
+          <text x="739" y="301" font-family="DM Mono, monospace" font-size="11">GLM · DeepSeek · any gateway model</text>
+        </g>
+      </svg>
+
+      <svg class="v" viewBox="0 0 340 620" aria-hidden="true">
+        <defs>
+          <marker id="av" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 1L9 5L0 9" fill="none" stroke="#8f887b" stroke-width="1.4"/></marker>
+        </defs>
+        <g fill="#1a1817" stroke="#4a463d">
+          <rect x="40" y="1" width="260" height="84" rx="8"/>
+          <rect x="40" y="125" width="260" height="84" rx="8"/>
+          <rect x="40" y="249" width="260" height="84" rx="8" fill="#ff8001" stroke="#ff8001"/>
+          <rect x="1" y="403" width="164" height="216" rx="8"/>
+          <rect x="175" y="403" width="164" height="216" rx="8"/>
+        </g>
+        <g fill="none" stroke="#8f887b" stroke-width="1.2">
+          <path d="M170 85V121" marker-end="url(#av)"/>
+          <path d="M170 209V245" marker-end="url(#av)"/>
+          <path d="M150 333C150 370 83 365 83 399" marker-end="url(#av)"/>
+          <path d="M190 333C190 370 257 365 257 399" marker-end="url(#av)" stroke-dasharray="4 4"/>
+        </g>
+        <g fill="none" stroke="#ff8001" stroke-width="1.2">
+          <path class="flow" d="M170 85V121"/>
+          <path class="flow" d="M170 209V245"/>
+          <path class="flow" d="M150 333C150 370 83 365 83 399"/>
+        </g>
+        <g font-family="DM Mono, monospace" font-size="11" letter-spacing=".9" fill="#8f887b">
+          <text x="60" y="26">AGENT</text>
+          <text x="60" y="150">SHIM</text>
+          <text x="60" y="274" fill="#131210">ROUTER</text>
+          <text x="17" y="430">A · DIRECT</text>
+          <text x="191" y="430">B · GATEWAY</text>
+        </g>
+        <g font-size="16" font-weight="500" fill="#f7f5ef">
+          <text x="60" y="52">claude · codex</text>
+          <text x="60" y="176">resolve identity</text>
+          <text x="60" y="300" fill="#131210" font-family="DM Mono, monospace" font-size="15">barrito :4141</text>
+          <text x="17" y="458" font-size="14">api.anthropic</text>
+          <text x="17" y="476" font-size="14">.com</text>
+          <text x="191" y="458" font-size="14">Vercel AI</text>
+          <text x="191" y="476" font-size="14">Gateway</text>
+        </g>
+        <g font-size="12.5" fill="#b3ac9f">
+          <text x="60" y="72">opencode · custom</text>
+          <text x="60" y="196" font-family="DM Mono, monospace" font-size="11">env → remote → path → default</text>
+          <text x="60" y="320" fill="#6b3347" font-family="DM Mono, monospace">127.0.0.1 · keychain</text>
+          <text x="17" y="506">Claude Code</text>
+          <text x="17" y="524">+ Max</text>
+          <text x="17" y="552">OAuth</text>
+          <text x="17" y="570">untouched</text>
+          <text x="191" y="506">Fallback +</text>
+          <text x="191" y="524">other harnesses</text>
+          <text x="191" y="552">identity key →</text>
+          <text x="191" y="570" font-family="DM Mono, monospace" font-size="11">GLM · DeepSeek</text>
+          <text x="191" y="588" font-family="DM Mono, monospace" font-size="11">any model</text>
+        </g>
+      </svg>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <span class="n">01</span>
+        <h3>Resolve</h3>
+        <p>The shim picks the identity at exec: explicit env override, then the git remote owner, then the path glob, then your default. Worktrees anywhere just work.</p>
+      </div>
+      <div class="step">
+        <span class="n">02</span>
+        <h3>Route</h3>
+        <p>Claude Code on a live Max plan goes straight to Anthropic with its own login. Everything else goes to the gateway on that identity's key.</p>
+      </div>
+      <div class="step">
+        <span class="n">03</span>
+        <h3>Fall back loudly</h3>
+        <p>When Max is spent or Anthropic is down, traffic moves to GLM 5.3, then DeepSeek V4.1 Flash — and every transition is announced.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow"><span class="no">03</span> Features</p>
+      <h2>The right account, every time, <span class="funky">without thinking.</span></h2>
+    </div>
+    <div class="grid">
+      <div class="card span2">
+        <span class="glyph" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="#b3ac9f" stroke-width="1.4"><circle cx="4" cy="4" r="2"/><circle cx="4" cy="12" r="2"/><circle cx="12" cy="5" r="2"/><path d="M4 6v4M6 4h4v1M12 7v3a2 2 0 0 1-2 2H6"/></svg></span>
+        <h3>Identity by git remote</h3>
+        <p>The remote owner decides who you are, so worktrees anywhere on disk just work — emdash, Conductor, plain tmux. Paths are the backup; an env override is the escape hatch. Results are cached and <span class="ic">barrito which</span> explains every match.</p>
+      </div>
+      <div class="card">
+        <span class="glyph" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="#b3ac9f" stroke-width="1.4"><path d="M8 2a4 4 0 0 1 4 4c0 2.5 1 3.5 1.5 4H2.5C3 9.5 4 8.5 4 6a4 4 0 0 1 4-4ZM6.5 13a1.5 1.5 0 0 0 3 0"/></svg></span>
+        <h3>Loud fallback</h3>
+        <p>A platform notification, a statusline change, and a line in <span class="ic">barrito status</span> on every tier move. Silent otherwise.</p>
+      </div>
+      <div class="card">
+        <span class="glyph" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="#b3ac9f" stroke-width="1.4"><path d="M2 12a6 6 0 0 1 12 0"/><path d="M8 12 11 7"/><path d="M1.5 12h1M13.5 12h1M8 5.5V4"/></svg></span>
+        <h3>Quota aware</h3>
+        <p>Reads Max 5h and 7d utilization from Anthropic's own rate-limit headers and skips the direct route when it's spent.</p>
+      </div>
+      <div class="card span2">
+        <span class="glyph" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="#b3ac9f" stroke-width="1.4"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M5 7l-1.5 1.5L5 10M7 10h4"/></svg></span>
+        <h3>Any host</h3>
+        <p>Identity resolves in the shim at exec time, not in whatever env the host started with — so emdash, Conductor and tmux worktrees need zero per-host setup. One restart after install picks up the new PATH.</p>
+      </div>
+      <div class="card">
+        <span class="glyph" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="#b3ac9f" stroke-width="1.4"><circle cx="5.5" cy="8" r="2.5"/><path d="M8 8h6M11 8v2.5M13.5 8V6"/></svg></span>
+        <h3>Keys stay out of agent env</h3>
+        <p>The router reads your platform keychain — Keychain on macOS, <span class="ic">secret-tool</span> on Linux. Agents get a <span class="ic">barrito:&lt;id&gt;</span> handle that's useless anywhere but localhost.</p>
+      </div>
+      <div class="card">
+        <span class="glyph" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="#b3ac9f" stroke-width="1.4"><path d="M3 4h10M3 8h7M3 12h9"/><circle cx="13" cy="8" r="1.4"/></svg></span>
+        <h3>Picker from rules</h3>
+        <p><span class="ic">models sync</span> renders the gateway catalog through your rules into <span class="ic">/model</span> rows, per identity. Idempotent; rerun any time.</p>
+      </div>
+      <div class="card">
+        <span class="glyph" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="#b3ac9f" stroke-width="1.4"><circle cx="3.5" cy="12.5" r="2"/><circle cx="12.5" cy="3.5" r="2"/><path d="M5 11 11 5"/></svg></span>
+        <h3>Graft built in</h3>
+        <p>Pick repos at init. New worktrees of a grafted repo build their per-repo code graph in the background.</p>
+      </div>
+    </div>
+  </div>
+</section>
+<!-- HARNESSES -->
+<section id="harnesses">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow"><span class="no">04</span> Harnesses</p>
+      <h2>Claude Code gets the most. Everything gets something.</h2>
+      <p class="lead">Support comes in three levels, set by what each harness can accept. The gateway speaks OpenAI and Anthropic, so nothing gets translated.</p>
+    </div>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>Level</th><th>Harnesses</th><th>What you get</th></tr></thead>
+        <tbody>
+          <tr><td><span class="lvl full">Full</span></td><td>Claude Code</td><td>Max direct, quota tracking, loud fallback, <span class="ic">/barrito</span> slash command, statusline.</td></tr>
+          <tr><td><span class="lvl">Gateway</span></td><td>Codex, OpenCode, custom scripts, AI SDK apps</td><td>The identity's gateway key via the local proxy. No format translation — the router swaps a handle for a key and reverse-proxies unchanged.</td></tr>
+          <tr><td><span class="lvl">Env</span></td><td>cursor-agent</td><td>The identity's Cursor key injected into the environment; Cursor's backend can't be proxied.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="custom">
+      <div>
+        <p class="eyebrow">Bring your own</p>
+        <h3 style="font-size:24px">Any binary in four lines.</h3>
+        <p>Declare the env your tool expects. barrito fills <span class="ic">{gateway}</span> and <span class="ic">{handle}</span> per identity, then puts a shim on your PATH. Shims are bash with a true <span class="ic">exec</span>, so TTY and signals stay native.</p>
+      </div>
+      <div class="stack">
+        <div class="code">
+          <div class="lbl"><span>~/.config/barrito/config.toml</span><span>toml</span></div>
+<pre><span class="m">[harness.mybot]</span>
+bin = "mybot"
+env = { OPENAI_BASE_URL = "{gateway}/v1", OPENAI_API_KEY = "{handle}" }</pre>
+        </div>
+        <div class="code">
+          <div class="lbl"><span>terminal</span><span>sh</span></div>
+<pre><span class="d">$</span> barrito shim mybot</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- WHEN MAX RUNS OUT -->
+<section id="fallback">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow"><span class="no">05</span> When Max runs out</p>
+      <h2>Cheap first, <span class="funky">loudly.</span></h2>
+      <p class="lead">A per-identity tier state machine keeps a spent quota spent across restarts. The triggering error arrives before any stream bytes, so the same request is retried on the fallback chain immediately — you see an answer, not an error. Model output is never mutated.</p>
+    </div>
+
+    <div class="demo">
+      <div>
+        <ul class="notes" style="margin-top:0">
+          <li><b>Quota</b>A direct 429 moves the identity to fallback until the reset timestamp from Anthropic's rate-limit headers; the next request after that probes direct again.</li>
+          <li><b>Outage</b>A direct 529/5xx or connect error gets one free retry; a second within 60s opens the breaker, which half-opens after 60s and backs off ×2 up to 15m.</li>
+          <li><b>The statusline is the truth</b>If Max runs out mid-session the <span class="ic">/model</span> label still says Opus — barrito can't change Claude Code's selection. The statusline says what's actually serving you.</li>
+          <li><b>Pins apply immediately</b>On the next API call, including inside a running turn.</li>
+        </ul>
+      </div>
+      <div class="term">
+        <div class="term-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="t">claude code — /model</span></div>
+<pre><span class="d">/model</span>
+
+  Opus 5.5              <span class="m">Max · loud cheap fallback when spent</span>
+  Sonnet 5              <span class="m">Max · loud cheap fallback when spent</span>
+  <span class="d">──────────────────</span>
+  glm-5.3               <span class="m">zai · $0.55 / $2.10</span>
+  deepseek-v4.1-flash   <span class="m">deepseek · $0.14 / $0.28</span>
+  opus-5-5 (gateway)    <span class="m">anthropic · Claude on credits</span>
+
+<span class="m">statusline  personal · <span class="warn">⚠ GLM 5.3</span> · API $ · Max ↺ 14:05</span><span class="caret"></span></pre>
+      </div>
+    </div>
+
+    <div class="status">
+      <div class="panel">
+        <p class="eyebrow">Loud on every transition</p>
+        <div class="pills">
+          <span class="pill">work <span class="s">·</span> Max 62%</span>
+          <span class="pill warn">personal <span class="s">·</span> ⚠ GLM 5.3 <span class="s">·</span> API $ <span class="s">·</span> Max ↺ 14:05</span>
+        </div>
+        <p style="margin:18px 0 0;color:var(--dim);font-size:14px">…plus a native notification and an <span class="ic">x-barrito-tier</span> response header. In CI, the same transitions become GitHub annotations.</p>
+      </div>
+      <div class="panel">
+        <p class="eyebrow">Notification</p>
+        <div class="notif">
+          <span class="ico"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M9 10h7.5a4 4 0 0 1 0 8H9zM9 18h8.5a4 4 0 0 1 0 8H9z" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round"/></svg></span>
+          <div>
+            <b>barrito · personal</b>
+            <span>Max spent. Now GLM 5.3 on API credits until 14:05.</span>
+            <small>now — and another one when Max is back</small>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tbl" style="margin-top:32px">
+      <table>
+        <thead><tr><th>Want</th><th>How</th><th>Scope</th></tr></thead>
+        <tbody>
+          <tr><td>Switch model now</td><td><span class="ic">/model</span> → any gateway row</td><td>This session</td></tr>
+          <tr><td>Max, cheap fallback when spent</td><td>Built-in rows (Opus, Sonnet)</td><td>This session</td></tr>
+          <tr><td>Keep every session cheap</td><td><span class="ic">barrito pin personal glm-5.3</span> or <span class="ic">/barrito pin glm-5.3</span></td><td>Every session of that identity</td></tr>
+          <tr><td>Never fall back; show the quota error</td><td><span class="ic">barrito pin work max</span></td><td>Every session of that identity</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- MODELS -->
+<section id="models">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow"><span class="no">06</span> Models</p>
+      <h2>The picker writes itself.</h2>
+      <p class="lead">Claude Code can't discover gateway models under Max OAuth, so barrito registers them from your rules — rerun any time new models land. Other harnesses need nothing: OpenCode reads the catalog itself, Codex takes any ID via <span class="ic">-m</span>, Cursor uses its own models.</p>
+    </div>
+
+    <div class="custom" style="margin-top:0">
+      <div class="stack">
+        <div class="code">
+          <div class="lbl"><span>~/.config/barrito/config.toml</span><span>rules</span></div>
+<pre><span class="m">[models]</span>
+require        = ["tool-use"]
+include        = ["zai/*", "deepseek/*", "anthropic/*"]
+exclude        = ["*-preview"]
+max_input_price = 5.00
+pin            = ["meta/muse-spark-1.3-contributor"]</pre>
+        </div>
+        <ul class="notes">
+          <li><b>Idempotent</b>Same catalog in, same files out. Retired models drop out; anything still referencing one is flagged in the dry run and in <span class="ic">doctor</span>.</li>
+          <li><b>Every identity</b>Picker rows and subagent files are written into each Claude config dir, for every identity, with your labels.</li>
+        </ul>
+      </div>
+      <div class="term">
+        <div class="term-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="t">terminal — barrito models sync</span></div>
+<pre><span class="d">$</span> barrito models sync --dry-run
+  + zai/glm-5.4                    $0.55 / $2.10   <span class="ok">new</span>
+  + deepseek/deepseek-v4.2-flash   $0.14 / $0.28   <span class="ok">new</span>
+  - stepfun/step-3.7-flash         <span class="warn">retired from gateway</span>
+  = 11 unchanged
+  <span class="m">→ ~/.claude-work, ~/.claude-personal</span><span class="caret"></span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+<!-- CI -->
+<section id="ci">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow"><span class="no">07</span> CI</p>
+      <h2>Max in CI. Cheap when it's spent.</h2>
+      <p class="lead">Claude Code jobs in GitHub Actions run through genuine Claude Code with your Max OAuth token. When Max runs out mid-run, the job doesn't fail — it falls back to GLM on the repo's gateway key, and the run gets a visible warning annotation plus a step summary.</p>
+    </div>
+
+    <div class="cli">
+      <div class="code wide">
+        <div class="lbl"><span>.github/workflows/ci.yml</span><span>yaml</span></div>
+<pre>- uses: actions/setup-node@v4
+  with: { node-version: 22 }
+- run: npx barrito ci --identity ci --gateway-key env:AI_GATEWAY_API_KEY --fallback zai/glm-5.3
+  env:
+    AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+- run: claude -p "fix the failing test"
+  env:
+    CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+- if: always()
+  run: npx barrito ci stop</pre>
+      </div>
+      <div class="code">
+        <div class="lbl"><span>annotation</span><span>github actions</span></div>
+<pre><span class="warn">⚠</span> barrito · ci — Max spent.
+   Now GLM 5.3 on API credits until 14:05.</pre>
+      </div>
+      <div class="panel">
+        <p class="eyebrow">How it works</p>
+        <p style="margin:0;color:var(--dim);font-size:15px"><span class="ic">barrito ci</span> writes shims to <span class="ic">$GITHUB_PATH</span>, the router env to <span class="ic">$GITHUB_ENV</span>, starts the router detached and waits for <span class="ic">/health</span>. <span class="ic">ci stop</span> writes <span class="ic">status --markdown</span> into the step summary and never fails the job — pair it with <span class="ic">if: always()</span>. Without <span class="ic">CLAUDE_CODE_OAUTH_TOKEN</span> the job still runs, on the gateway chain only. Compliance is unchanged in CI: Max only ever flows through genuine Claude Code; every other tool stays on the repo's gateway key.</p>
+      </div>
+    </div>
+
+    <div class="tbl plat" style="margin-top:32px">
+      <table>
+        <thead><tr><th>Across platforms</th><th>macOS · Linux · CI</th></tr></thead>
+        <tbody>
+          <tr><td>Secrets</td><td>macOS Keychain · Linux <span class="ic">secret-tool</span> · <span class="ic">env:</span>/<span class="ic">file:</span> anywhere</td></tr>
+          <tr><td>Service</td><td><span class="ic">launchd</span> · <span class="ic">systemd --user</span> · <span class="ic">barrito serve --detach</span> for containers</td></tr>
+          <tr><td>Loud signal</td><td>macOS notification · <span class="ic">notify-send</span> · GitHub annotation + step summary</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- COMPLIANCE -->
+<section id="compliance">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow"><span class="no">08</span> Compliant by design</p>
+      <h2>Nothing to hide, so nothing to <span class="funky">trace.</span></h2>
+      <p class="lead">barrito routes traffic. It doesn't disguise it. Every request goes to a provider you pay, from the client that provider expects.</p>
+    </div>
+    <div class="comp">
+      <ul class="rules">
+        <li><span class="n">01</span><span><strong>Max OAuth only ever originates from genuine Claude Code → Anthropic direct.</strong> The router forwards those requests unchanged except stripping barrito's own headers, so Anthropic sees normal Claude Code traffic.</span></li>
+        <li><span class="n">02</span><span><strong>Non-Claude-Code tools never touch Max</strong> — gateway keys only.</span></li>
+        <li><span class="n">03</span><span><strong>Fallback = a different provider on your paid gateway key,</strong> not another subscription.</span></li>
+      </ul>
+      <div class="wont">
+        <span class="tag" aria-hidden="true">won't do</span>
+        <p class="eyebrow">What barrito won't do</p>
+        <ul>
+          <li>Pool subscriptions</li>
+          <li>Replay OAuth tokens into other tools</li>
+          <li>Spoof clients</li>
+          <li>Translate formats</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section id="faq">
+  <div class="wrap faq">
+    <div>
+      <p class="eyebrow">FAQ</p>
+      <h2>Questions, answered.</h2>
+    </div>
+    <div class="qs">
+      <details>
+        <summary>Does it work with emdash or Conductor?</summary>
+        <p>Yes. Shims resolve identity at exec time, so it doesn't matter what env the host launched with. Restart the host once after install so it picks up the new PATH — <span class="ic">doctor</span> tells you if you forget.</p>
+      </details>
+      <details>
+        <summary>What happens when Max runs out?</summary>
+        <p>barrito sees the 5h or 7d window is spent and routes Claude Code to GLM 5.3, then DeepSeek V4.1 Flash, on that identity's gateway key. You get a notification, a statusline change and an <span class="ic">x-barrito-tier</span> header. When the window resets, it switches back to Max automatically.</p>
+      </details>
+      <details>
+        <summary>Can I force a model?</summary>
+        <p>Yes. <span class="ic">barrito pin personal glm-5.3</span> keeps an identity on a model even after reset, and <span class="ic">barrito unpin</span> undoes it. Gateway models also show up as rows in Claude Code's <span class="ic">/model</span> picker.</p>
+      </details>
+      <details>
+        <summary>Where does my /model picker come from?</summary>
+        <p><span class="ic">barrito models sync</span> renders the gateway catalog through your rules into picker rows and subagent files, for every identity. Rerun it any time new models land; retired models are flagged in the dry run and in <span class="ic">doctor</span>.</p>
+      </details>
+      <details>
+        <summary>Where do my keys live?</summary>
+        <p>In your platform keychain — macOS Keychain or Linux <span class="ic">secret-tool</span> — or, in CI and containers, an <span class="ic">env:</span> or <span class="ic">file:</span> ref. The router reads them; agents only see a <span class="ic">barrito:&lt;id&gt;</span> handle. cursor-agent is the one exception, since it only accepts a raw key in its environment.</p>
+      </details>
+      <details>
+        <summary>Do I need Graft?</summary>
+        <p>No. It's optional and per repo. Init ranks your repos by tracked LOC and you pick which ones get a code graph; <span class="ic">barrito graft add</span> adds more later.</p>
+      </details>
+      <details>
+        <summary>Linux?</summary>
+        <p>Yes. Same router, same CLI: a <span class="ic">systemd --user</span> unit for the service, <span class="ic">secret-tool</span> for secrets, XDG paths for config and state, <span class="ic">notify-send</span> when a display exists.</p>
+      </details>
+      <details>
+        <summary>Does it work in GitHub Actions or Docker?</summary>
+        <p>Yes. <span class="ic">barrito ci</span> covers GitHub Actions end to end, and <span class="ic">barrito serve --detach</span> covers containers. Secrets come from <span class="ic">env:</span> or <span class="ic">file:</span> refs, so no keyring is needed.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="final">
+  <div class="wrap">
+    <p class="eyebrow">Get started</p>
+    <h2>Install once. Stop thinking about accounts.</h2>
+    <p class="lead">One command, one router, every agent on the right identity.</p>
+    <div class="ctas">
+      <a class="btn primary" href="plan.html">Read the launch plan</a>
+      <a class="btn" href="https://github.com/tbarho/barrito">View on GitHub</a>
+    </div>
+  </div>
+</section>
+</main>
+<footer>
+  <div class="wrap">
+    <div class="f-top">
+      <div>
+        <a class="mark" href="#top" aria-label="barrito home">
+          <img src="assets/logo-64.png" width="26" height="26" alt="" decoding="async">
+          barrito
+        </a>
+        <p class="about">One local router, every identity. Your Max plan when it's there, cheap gateway models when it's not — and you always know which.</p>
+      </div>
+      <nav aria-label="Footer">
+        <a href="#setup">Setup</a>
+        <a href="#how">How it works</a>
+        <a href="#features">Features</a>
+        <a href="#harnesses">Harnesses</a>
+        <a href="#fallback">When Max runs out</a>
+        <a href="#models">Models</a>
+        <a href="#ci">CI</a>
+        <a href="#compliance">Compliance</a>
+        <a href="#faq">FAQ</a>
+        <a href="plan.html">Launch plan</a>
+        <a href="https://github.com/tbarho/barrito">GitHub</a>
+      </nav>
+    </div>
+    <div class="f-bot">
+      <span>MIT</span>
+      <span>macOS · Linux · GitHub Actions · Docker</span>
+      <span>Node ≥ 22.18</span>
+      <span class="sp" aria-hidden="true"></span>
+      <span class="host"><i aria-hidden="true"></i>127.0.0.1:4141</span>
+    </div>
+  </div>
+</footer>
+<script>
+(function(){
+  var tabs = [].slice.call(document.querySelectorAll('.tab'));
+  function pick(t){
+    tabs.forEach(function(x){
+      var on = x === t;
+      x.setAttribute('aria-selected', on);
+      x.tabIndex = on ? 0 : -1;
+      document.getElementById(x.getAttribute('aria-controls')).hidden = !on;
+    });
+  }
+  tabs.forEach(function(t, i){
+    t.addEventListener('click', function(){ pick(t) });
+    t.addEventListener('keydown', function(e){
+      var d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (!d) return;
+      var n = tabs[(i + d + tabs.length) % tabs.length];
+      pick(n); n.focus();
+    });
+  });
+
+  document.querySelectorAll('.copy').forEach(function(b){
+    b.addEventListener('click', function(){
+      var txt = b.getAttribute('data-copy');
+      var done = function(){ b.classList.add('done'); setTimeout(function(){ b.classList.remove('done') }, 1400) };
+      if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(txt).then(done);
+      var ta = document.createElement('textarea');
+      ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done() } catch (e) {}
+      ta.remove();
+    });
+  });
+
+  // scroll reveal
+  if ('IntersectionObserver' in window && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    var io = new IntersectionObserver(function(es){
+      es.forEach(function(e){
+        if (!e.isIntersecting) return;
+        e.target.classList.add('in');
+        io.unobserve(e.target);
+      });
+    }, { threshold: .15 });
+    document.querySelectorAll('.head,.term,.diagram,.card,.tbl,.code,.custom,.comp,.status').forEach(function(el, i){
+      el.classList.add('rv');
+      el.style.transitionDelay = (i % 4) * 40 + 'ms';
+      io.observe(el);
+    });
+  }
+
+  // init demo typewriter
+  var pre = document.getElementById('demo');
+  var replay = document.getElementById('replay');
+  var full = pre.innerHTML;
+  var lines = full.split('\n');
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var timer = null;
+  if (reduced || !('IntersectionObserver' in window)) { replay.hidden = true; return; }
+
+  function play(){
+    clearTimeout(timer);
+    pre.style.minHeight = '';
+    pre.innerHTML = full;
+    pre.style.minHeight = pre.offsetHeight + 'px';
+    var cmd = 'npx barrito init', i = 0, n = 0;
+    pre.innerHTML = '<span class="d">$</span> <span class="caret"></span>';
+    function type(){
+      if (i <= cmd.length) {
+        pre.innerHTML = '<span class="d">$</span> ' + cmd.slice(0, i) + '<span class="caret"></span>';
+        i++;
+        timer = setTimeout(type, 55);
+        return;
+      }
+      n = 1;
+      timer = setTimeout(out, 350);
+    }
+    function out(){
+      if (n > lines.length) { pre.innerHTML = full; return; }
+      pre.innerHTML = lines.slice(0, n).join('\n') + (n < lines.length ? '\n<span class="caret"></span>' : '');
+      n++;
+      var l = lines[n - 1] || '';
+      timer = setTimeout(out, l.indexOf('◇') > -1 ? 260 : 70);
+    }
+    type();
+  }
+
+  var seen = false;
+  new IntersectionObserver(function(es, o){
+    if (!es[0].isIntersecting || seen) return;
+    seen = true; o.disconnect(); play();
+  }, { threshold: .35 }).observe(pre);
+  replay.addEventListener('click', play);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,69 @@
+# Release on tag v*: verify the tag, publish to npm with provenance, then push
+# the rendered Homebrew formula to tbarho/homebrew-tap.
+#
+# Required secrets (Settings → Secrets and variables → Actions):
+#   NPM_TOKEN          npm automation token with publish rights on the "barrito" package
+#   HOMEBREW_TAP_TOKEN  classic PAT with repo write access to tbarho/homebrew-tap
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+# never cancel an in-flight release; queue a second tag instead
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm --provenance
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.x
+          cache: yarn
+          registry-url: https://registry.npmjs.org
+      - run: yarn install --frozen-lockfile
+      - run: yarn verify && yarn e2e && yarn smoke
+      - name: tag must match package.json
+        run: |
+          pkg="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "$pkg" ]; then
+            echo "FAIL: tag $GITHUB_REF_NAME != package.json version $pkg"
+            exit 1
+          fi
+      - name: npm publish
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: update homebrew tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          url="https://registry.npmjs.org/barrito/-/barrito-${version}.tgz"
+          sha256=$(curl -fsSL "$url" | shasum -a 256 | cut -d' ' -f1)
+          [ -n "$sha256" ] || { echo "FAIL: could not fetch $url"; exit 1; }
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/tbarho/homebrew-tap.git" tap
+          sed -e "s|__VERSION__|${version}|g" -e "s|__URL__|${url}|g" -e "s|__SHA256__|${sha256}|g" \
+            packaging/homebrew/barrito.rb > tap/Formula/barrito.rb
+          cat tap/Formula/barrito.rb
+          cd tap
+          git config user.name "barrito-release-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add Formula/barrito.rb
+          git commit -m "barrito ${version}"
+          if git push; then exit 0; fi
+          # non-fast-forward (a release landed meanwhile): rebase and retry once
+          git fetch origin
+          git rebase "$(git rev-parse --abbrev-ref origin/HEAD)"
+          git push

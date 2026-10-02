@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>barrito · launch plan</title>
+<meta name="description" content="Launch plan for barrito: per-identity local AI router + CLI for Claude Code, Codex, OpenCode, Cursor and custom harnesses.">
+<meta property="og:title" content="barrito · launch plan">
+<meta property="og:description" content="Launch plan for barrito: per-identity local AI router + CLI for Claude Code, Codex, OpenCode, Cursor and custom harnesses.">
+<meta property="og:image" content="assets/logo-512.png">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="barrito · launch plan">
+<meta name="twitter:description" content="Per-identity local AI router + CLI for Claude Code, Codex, OpenCode, Cursor and custom harnesses.">
+<meta name="twitter:image" content="assets/logo-512.png">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/logo-32.png">
+<link rel="icon" type="image/png" sizes="64x64" href="assets/logo-64.png">
+<link rel="apple-touch-icon" href="assets/logo-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Geist+Mono:wght@400..600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#fafafa;--surface:#fff;--ink:#171717;--ink2:#666;--ink3:#8f8f8f;--line:#eaeaea;--code:#fafafa}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.65 Geist,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--ink);text-underline-offset:3px;text-decoration-color:#c8c8c8}
+a:hover{text-decoration-color:var(--ink)}
+.top{position:sticky;top:0;z-index:5;background:rgba(250,250,250,.85);backdrop-filter:saturate(1.4) blur(10px);border-bottom:1px solid var(--line)}
+.top .in{max-width:1120px;margin:0 auto;padding:12px 24px;display:flex;align-items:center;gap:16px}
+.mark{font-weight:600;letter-spacing:-.02em;text-decoration:none}
+.top .sp{flex:1}
+.top a.l{font-size:13px;color:var(--ink2);text-decoration:none}
+.top a.l:hover{color:var(--ink)}
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:200px minmax(0,1fr);gap:56px}
+nav.toc{position:sticky;top:72px;align-self:start;padding-top:56px;font-size:13px}
+nav.toc a{display:block;padding:4px 0;color:var(--ink2);text-decoration:none}
+nav.toc a:hover{color:var(--ink)}
+main{padding:56px 0 120px;min-width:0}
+.eyebrow{font:500 11px/1 "Geist Mono",monospace;letter-spacing:.08em;text-transform:uppercase;color:var(--ink2);margin:0 0 12px}
+h1{font-size:44px;line-height:1.08;letter-spacing:-.04em;font-weight:600;margin:0 0 16px}
+h2{font-size:26px;line-height:1.2;letter-spacing:-.03em;font-weight:600;margin:0 0 14px}
+h3{font-size:16px;letter-spacing:-.01em;font-weight:600;margin:28px 0 8px}
+.lede{font-size:18px;color:var(--ink2);max-width:680px;margin:0}
+section{padding:56px 0 8px;border-top:1px solid var(--line);margin-top:56px;scroll-margin-top:64px}
+section:first-of-type{border-top:0;margin-top:0;padding-top:0}
+p,ul,ol{max-width:760px}
+li{margin:4px 0}
+.muted{color:var(--ink2)}
+code{font:13px/1.5 "Geist Mono",monospace;background:#f2f2f2;border-radius:4px;padding:1px 5px}
+li code{overflow-wrap:anywhere}
+pre{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px 18px;overflow-x:auto;font:13px/1.6 "Geist Mono",monospace;margin:14px 0}
+pre code{background:none;padding:0;font-size:inherit}
+pre .c{color:var(--ink3)}
+.cap{font:500 11px/1 "Geist Mono",monospace;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin:22px 0 -6px}
+table{width:100%;border-collapse:collapse;font-size:14px;margin:14px 0;background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden;display:block;overflow-x:auto}
+thead,tbody{display:table;width:100%;border-collapse:collapse}
+th,td{text-align:left;vertical-align:top;padding:10px 14px;border-bottom:1px solid var(--line)}
+th{font:500 11px/1.4 "Geist Mono",monospace;letter-spacing:.06em;text-transform:uppercase;color:var(--ink2);background:var(--code)}
+tr:last-child td{border-bottom:0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:18px 0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px 18px}
+.card .eyebrow{margin-bottom:8px}
+.card p{margin:0;font-size:14px;color:var(--ink2)}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:0;border:1px solid var(--line);border-radius:8px;background:var(--surface);margin:24px 0 0;overflow:hidden}
+.kv div{padding:14px 16px;border-right:1px solid var(--line)}
+.kv div:last-child{border-right:0}
+.kv b{display:block;font:500 11px/1 "Geist Mono",monospace;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin-bottom:8px;font-weight:500}
+.kv span{font-weight:500;letter-spacing:-.01em}
+.note{border-left:2px solid var(--ink);padding:2px 0 2px 14px;margin:18px 0;color:var(--ink);max-width:760px}
+.no li::marker{content:"✕  ";color:var(--ink3)}
+.check li::marker{content:"□  ";color:var(--ink3)}
+ol.steps{counter-reset:s;list-style:none;padding:0}
+ol.steps>li{counter-increment:s;position:relative;padding-left:40px;margin:14px 0}
+ol.steps>li::before{content:counter(s,decimal-leading-zero);position:absolute;left:0;top:1px;font:500 12px/1.6 "Geist Mono",monospace;color:var(--ink3)}
+@media (max-width:860px){.wrap{grid-template-columns:1fr;gap:0}nav.toc{display:none}h1{font-size:34px}main{padding-top:36px}.top .in{padding:12px 16px}.wrap{padding:0 16px}.kv div{border-right:0;border-bottom:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<header class="top"><div class="in">
+  <a class="mark" href="index.html"><img src="assets/logo-64.png" width="24" height="24" alt="" decoding="async" style="vertical-align:-5px;margin-right:8px;border-radius:6px">barrito</a>
+  <span class="sp"></span>
+  <a class="l" href="index.html">Home</a>
+  <a class="l" href="https://github.com/tbarho/barrito">GitHub</a>
+</div></header>
+
+<div class="wrap">
+<nav class="toc">
+  <div class="eyebrow">Plan</div>
+  <a href="#summary">Summary</a>
+  <a href="#scope">Launch scope</a>
+  <a href="#devx">DevX · CLI</a>
+  <a href="#session">In-session control</a>
+  <a href="#models">Models</a>
+  <a href="#identity">Identity</a>
+  <a href="#harness">Harnesses</a>
+  <a href="#router">Router</a>
+  <a href="#fallback">Fallback</a>
+  <a href="#config">Config</a>
+  <a href="#graft">Graft</a>
+  <a href="#migrate">Migration</a>
+  <a href="#package">Packaging</a>
+  <a href="#linux">Linux &amp; CI</a>
+  <a href="#tests">Tests</a>
+  <a href="#tasks">Task order</a>
+  <a href="#done">Definition of done</a>
+  <a href="#verify">Verify in impl</a>
+</nav>
+
+<main>
+<section id="summary">
+  <p class="eyebrow">Launch plan · v1.0 · 2026-10-01</p>
+  <h1>barrito</h1>
+  <p class="lede">One local router and CLI that picks the right identity for every coding agent, by repo. Claude Code uses that identity's Max login direct to Anthropic. When Max runs out it drops to cheap models on that identity's Vercel AI Gateway key, and it tells you. Every other harness gets the identity's gateway key through a local proxy.</p>
+  <div class="kv">
+    <div><b>Repo</b><span>~/Code/barrito</span></div>
+    <div><b>Install</b><span>npx · brew · yarn</span></div>
+    <div><b>Runtime</b><span>Node ≥ 22.18 · TypeScript</span></div>
+    <div><b>Replaces</b><span>claude-router + 4 shims + .envrc links</span></div>
+  </div>
+  <p class="note">One release. Everything below ships together. Task order inside the release is sequencing, not phases.</p>
+</section>
+
+<section id="scope">
+  <p class="eyebrow">Scope</p>
+  <h2>What ships, what doesn't</h2>
+  <h3>In</h3>
+  <ul>
+    <li>Identities (<code>work</code>, <code>personal</code>, any number), each with its own Claude config dir, gateway key, Cursor key and fallback chain.</li>
+    <li>Identity resolution: env override → git remote owner → path glob → default. Resolved at exec time in a shim, so it works in emdash, Conductor, tmux and plain terminals.</li>
+    <li>Router on <code>127.0.0.1:4141</code>: direct Max passthrough, quota tracking, loud cheap-first fallback, gateway proxy for other harnesses.</li>
+    <li>Harness support at three levels: Full (Claude Code), Gateway (Codex, OpenCode, custom, AI SDK apps), Env (cursor-agent). Custom harnesses come from config.</li>
+    <li>Wizard <code>barrito init</code>, plus <code>status</code>, <code>which</code>, <code>doctor</code>, <code>pin</code>, <code>models</code>, <code>graft</code>, <code>shim</code>, <code>logs</code>, <code>exec</code>, <code>env</code>, <code>uninstall</code>.</li>
+    <li>Rule-based Claude Code model registration: <code>barrito models sync</code> renders the gateway catalog (filtered by your rules) into <code>modelPicker</code> and the subagent files for every identity. Rerunnable; replaces the hand-kept <code>claude-settings.json</code> and <code>global/agents/</code>.</li>
+    <li><code>/barrito</code> slash command installed into each Claude config dir (<code>status</code>, <code>pin</code>, <code>unpin</code> from inside a session).</li>
+    <li>Loud signals: platform notification on every tier change (macOS notification, Linux <code>notify-send</code>, GitHub annotation in CI), a statusline segment, an <code>x-barrito-tier</code> response header, and the log.</li>
+    <li>Linux, same router and CLI: <code>systemd --user</code> service unit, <code>secret-tool</code> keychain, XDG paths, <code>notify-send</code>.</li>
+    <li>CI: <code>barrito ci</code> for GitHub Actions (shims → <code>$GITHUB_PATH</code>, router env → <code>$GITHUB_ENV</code>, tier changes + API spend → the step summary) and <code>serve --detach</code> for containers, with <code>env:</code>/<code>file:</code> secrets where there's no keyring.</li>
+    <li>Graft wiring per chosen repo, with a background graph build in fresh worktrees.</li>
+    <li>Migration off the current setup, backed up first.</li>
+    <li>npm package + Homebrew tap + launchd/systemd service.</li>
+    <li>Landing page (index.html of this site), README, <code>--help</code> for every command.</li>
+  </ul>
+  <h3>Out, deliberately</h3>
+  <ul class="no">
+    <li>Format translation (OpenAI ↔ Anthropic). The gateway speaks both.</li>
+    <li>Max for anything other than genuine Claude Code. That's the compliance line.</li>
+    <li>Subscription pooling and multi-account round-robin.</li>
+    <li>Free-tier OAuth providers (Kiro, iFlow, Qwen). Same token-replay pattern, plus unvetted data handling.</li>
+    <li>Proxy-side RTK or caveman rewriting. Those stay at the hook and skill layer.</li>
+    <li>Fallback chains for Gateway-level harnesses. They choose their own model, there's no Max to run out, and the gateway already falls back between providers.</li>
+    <li>Dashboard UI. <code>status</code>, the statusline and logs cover it.</li>
+    <li>Changes to other transcript tooling beyond reading both transcript roots.</li>
+  </ul>
+</section>
+
+<section id="devx">
+  <p class="eyebrow">Developer experience</p>
+  <h2>CLI spec</h2>
+  <p>A <code>create-next-app</code>-style wizard for setup, then small idempotent commands. Every command has <code>--json</code> where output is tabular, and <code>--yes</code>/flags for non-interactive use. Re-running <code>init</code> edits the existing config; it never duplicates.</p>
+
+  <table><thead><tr><th>Command</th><th>Does</th></tr></thead><tbody>
+    <tr><td><code>barrito init [--dry-run] [--yes]</code></td><td>Wizard: detect, identities, logins, fallback, graft, write everything. Prints a diff before writing.</td></tr>
+    <tr><td><code>barrito status [--json] [--markdown]</code></td><td>Tier per identity, Max 5h/7d usage, reset times, API spend today. <code>--markdown</code> renders the same table for step summaries.</td></tr>
+    <tr><td><code>barrito which [path]</code></td><td>Identity for a path and the rule that matched.</td></tr>
+    <tr><td><code>barrito doctor</code></td><td>PATH order, service health, logins, keychain items, host restarts needed. Exits non-zero on any ✗.</td></tr>
+    <tr><td><code>barrito pin &lt;id&gt; &lt;max|model&gt;</code> / <code>unpin &lt;id&gt;</code></td><td>Identity-wide default for <em>all</em> sessions. Pinning <code>max</code> means quota errors surface instead of falling back. Per-session choice is <code>/model</code>, not pin.</td></tr>
+    <tr><td><code>barrito models [sync|search|add|rm]</code></td><td>Show the picker, sync it from the gateway catalog by rules (<code>--dry-run</code>, <code>--all</code>), browse with prices, pin or drop one.</td></tr>
+    <tr><td><code>/barrito [status|pin|unpin]</code></td><td>Slash command inside Claude Code; wraps the CLI.</td></tr>
+    <tr><td><code>barrito graft [add|rm|build] [path]</code></td><td>Repo checklist, wire and build graphs.</td></tr>
+    <tr><td><code>barrito shim [harness…]</code></td><td>(Re)generate shims for built-in or config-defined harnesses.</td></tr>
+    <tr><td><code>barrito exec &lt;bin&gt; -- args</code></td><td>Run any binary with its identity applied. What shims call.</td></tr>
+    <tr><td><code>barrito env [--shell] [path]</code></td><td>Print the env for a path. <code>eval "$(barrito env --shell)"</code> for direnv users.</td></tr>
+    <tr><td><code>barrito logs [-f]</code></td><td>Tail the router log (one line per request, no headers or bodies).</td></tr>
+    <tr><td><code>barrito serve [--detach]</code></td><td>Run the router in the foreground (the service runs this). <code>--detach</code>: background with a pidfile, for containers and hosts without a service manager.</td></tr>
+    <tr><td><code>barrito ci [stop] [--identity …] [--gateway-key env:…] [--fallback …] [--port …] | --config</code></td><td>GitHub Actions setup/teardown: writes shims → <code>$GITHUB_PATH</code>, router env → <code>$GITHUB_ENV</code>, starts the router detached and waits for <code>/health</code>. <code>stop</code> writes <code>status --markdown</code> into <code>$GITHUB_STEP_SUMMARY</code>.</td></tr>
+    <tr><td><code>barrito stop</code></td><td>Stop a detached router (pidfile).</td></tr>
+    <tr><td><code>barrito uninstall [--restore]</code></td><td>Remove the service, shims and settings fragments; optionally restore the backup.</td></tr>
+  </tbody></table>
+
+  <p class="cap">init</p>
+<pre><code>$ npx barrito init
+
+  barrito v1.0.0 · one router, every identity
+
+  ◇  Agents found
+  │  claude 2.1.287 · codex 0.61 · opencode 1.4 · cursor-agent 2026.09
+  │  hosts: emdash, conductor
+  │
+  ◇  Existing setup found
+  │  claude-router (launchd :4141) · 3 shims · 5 .envrc symlinks
+  │  back up to ~/.config/barrito/backup/2026-10-01T2030 and replace? Yes
+  │
+  ◇  Identity · work
+  │  match    github.com/acme/*  ~/Code/acme/**
+  │  claude   ~/.claude  ✓ logged in (Max)
+  │  gateway  keychain "Vercel AI Gateway Work"  ✓
+  │  cursor   keychain "Cursor Work"  ✓
+  │
+  ◇  Identity · personal (default)
+  │  match    github.com/you/*  ~/Code/you/**
+  │  claude   ~/.claude-personal  ✗ not logged in → login now? Yes
+  │  gateway  keychain "Vercel AI Gateway"  ✓
+  │  share rules/skills/agents from ~/.claude? Yes
+  │  copy 6 personal project histories to ~/.claude-personal? Yes
+  │
+  ◇  When Max runs out
+  │  ● cheap first, loudly   glm-5.3 → deepseek-v4.1-flash
+  │  ○ same Claude model on gateway credits
+  │  ○ stop and tell me
+  │
+  ◇  Graft which repos?  (ranked by tracked LOC)
+  │  ◼ acme/api             412k
+  │  ◼ you/side-project     188k
+  │  ◻ you/dotfiles         96k
+  │  ◻ acme/web             41k
+  │
+  └  Wrote config, 4 shims, dev.barrito.router, statusline.
+     Restart emdash and Conductor once so they pick up PATH.
+     Next: barrito doctor</code></pre>
+
+  <p class="cap">status · which · doctor</p>
+<pre><code>$ barrito status
+IDENTITY   TIER          MAX 5H   MAX 7D   RESETS   API TODAY
+work       max           62%      41%      15:10    $0.00
+personal   ⚠ glm-5.3     100%     88%      14:05    $1.84
+
+$ barrito which ~/emdash/worktrees/api
+work  ← remote github.com/acme/api
+
+$ barrito doctor
+✓ ~/.local/shims first on PATH
+✓ router up 127.0.0.1:4141 (pid 7085, 3d)
+✓ work: claude login · gateway key · cursor key
+✓ picker + fallback models all in gateway catalog
+! 3 new gateway models match your rules → barrito models sync
+✗ personal: emdash started before PATH change → restart emdash</code></pre>
+
+  <p class="cap">models</p>
+<pre><code>$ barrito models sync --dry-run
+  + zai/glm-5.4                    $0.55 / $2.10   new
+  + deepseek/deepseek-v4.2-flash   $0.14 / $0.28   new
+  - stepfun/step-3.7-flash         retired from gateway
+  = 11 unchanged
+  → ~/.claude, ~/.claude-personal
+
+$ barrito models sync          <span class="c"># write it</span>
+$ barrito models sync --all    <span class="c"># everything that passes `require`</span>
+$ barrito models search glm    <span class="c"># catalog + prices, no write</span>
+$ barrito models add meta/muse-spark-1.3-contributor</code></pre>
+
+  <p class="cap">pin · graft · harness · overrides</p>
+<pre><code>$ barrito pin personal glm-5.3     <span class="c"># stay cheap even after reset</span>
+$ barrito pin work max              <span class="c"># never fall back; quota errors surface</span>
+$ barrito unpin personal
+
+$ barrito graft add ~/Code/acme/web --summaries
+$ barrito shim mybot               <span class="c"># custom harness from config</span>
+$ BARRITO_IDENTITY=work claude      <span class="c"># one-off override</span>
+$ barrito logs -f
+2026-10-01T21:04:11Z personal POST /v1/messages claude-opus-5-5 → glm-5.3 (quota) 200 1840ms</code></pre>
+
+  <p class="cap">loud signals</p>
+<pre><code>statusline     work · Max 62%
+               personal · ⚠ GLM 5.3 · API $ · Max ↺ 14:05
+notification   barrito · personal — Max spent. Now GLM 5.3 on API credits until 14:05.
+               barrito · personal — Max is back.
+header         x-barrito-tier: fallback:glm-5.3; reason=quota; reset=2026-10-01T14:05:00-05:00</code></pre>
+</section>
+
+<section id="session">
+  <p class="eyebrow">In-session control</p>
+  <h2><code>/model</code> is the steering wheel</h2>
+  <p>Switching inline stays exactly as today. Explicit gateway picker IDs (<code>claude-code/*</code>) bypass the tier state machine; built-in rows (Opus, Sonnet, Fable) are "Max, falling back loudly when spent".</p>
+  <table><thead><tr><th>Want</th><th>How</th><th>Scope</th></tr></thead><tbody>
+    <tr><td>Switch model now</td><td><code>/model</code> → any gateway row</td><td>This session</td></tr>
+    <tr><td>Max, cheap fallback when spent</td><td>Built-in rows</td><td>This session</td></tr>
+    <tr><td>Keep every session cheap ("spent for the week")</td><td><code>barrito pin personal glm-5.3</code> or <code>/barrito pin glm-5.3</code></td><td>Every session of that identity</td></tr>
+    <tr><td>Never fall back, show the quota error</td><td><code>barrito pin work max</code></td><td>Every session of that identity</td></tr>
+  </tbody></table>
+  <ul>
+    <li>When Max runs out mid-session, the next API call (not the next turn) goes to the chain. The <code>/model</code> label still says Opus because barrito can't change Claude Code's selection. The statusline is the source of truth.</li>
+    <li>While spent, the options stay inline: keep GLM, <code>/model</code> → <code>Opus 5 (gateway)</code> (Claude on credits), or any other row.</li>
+    <li>Pins and <code>/barrito</code> apply on the next API call, including inside a running turn.</li>
+  </ul>
+</section>
+
+<section id="models">
+  <p class="eyebrow">Models</p>
+  <h2>Register gateway models in one command</h2>
+  <p>Claude Code can't discover gateway models under Max OAuth (discovery needs a static <code>ANTHROPIC_AUTH_TOKEN</code>), so the picker must be written. <code>barrito models sync</code> owns that list for every identity. Other harnesses need nothing: OpenCode reads the catalog itself, Codex takes any ID via <code>-m</code>, Cursor uses its own models.</p>
+  <ol class="steps">
+    <li><b>Source:</b> gateway catalog <code>GET /v1/models</code> with the identity key, cached daily.</li>
+    <li><b>Filter:</b> <code>require</code> → <code>include</code> → <code>exclude</code> → <code>max_input_price</code>, then <code>pin</code> entries added back.</li>
+    <li><b>Render:</b> <code>modelPicker</code> rows (<code>claude-code/</code> prefix, catalog label, price in the description, grouped by provider) plus generated subagent files (<code>astra</code>, <code>glm</code>, <code>deepseek</code>) into every Claude config dir. Labels set by hand in config win.</li>
+    <li><b>Idempotent:</b> same catalog in, same files out. Retired models are removed; a fallback chain or subagent that references one shows ✗ in the dry run and in <code>doctor</code>.</li>
+    <li><b>Never writes by itself:</b> <code>doctor</code> and <code>status</code> nudge when new models match your rules. Running sessions keep their picker until restart.</li>
+  </ol>
+  <p class="muted"><code>--all</code> works too, but expect 100+ picker rows. Rules give "everything new from providers I care about" without the clutter.</p>
+</section>
+
+<section id="identity">
+  <p class="eyebrow">Identity</p>
+  <h2>Who is this repo?</h2>
+  <ol class="steps">
+    <li><b><code>BARRITO_IDENTITY</code></b> in the environment wins. This is the escape hatch.</li>
+    <li><b>Git remote owner.</b> <code>git -C $PWD remote get-url origin</code>, normalized to <code>host/owner/repo</code> and matched against each identity's <code>match.remotes</code> globs. This is what makes emdash and Conductor worktrees in arbitrary directories just work.</li>
+    <li><b>Path glob</b> against <code>match.paths</code>, for repos without a remote or for non-repo directories.</li>
+    <li><b>Default identity</b> from config.</li>
+  </ol>
+  <p>Results are cached per git toplevel in <code>~/.local/state/barrito/which.json</code> (key: toplevel + remote URL), so a shim adds one git call on a cold cache and zero on a warm one. The <code>which</code> command prints the matching rule so a wrong match is easy to debug.</p>
+</section>
+
+<section id="harness">
+  <p class="eyebrow">Harnesses</p>
+  <h2>Bring your own harness</h2>
+  <table><thead><tr><th>Level</th><th>Harnesses</th><th>Mechanism</th></tr></thead><tbody>
+    <tr><td><b>Full</b></td><td>Claude Code</td><td><code>ANTHROPIC_BASE_URL=http://127.0.0.1:4141</code>, <code>CLAUDE_CONFIG_DIR</code> per identity (which switches the Max login), <code>ANTHROPIC_CUSTOM_HEADERS=x-barrito-identity: &lt;id&gt;</code>. The router runs the tier state machine.</td></tr>
+    <tr><td><b>Gateway</b></td><td>Codex, OpenCode, custom scripts, AI SDK apps</td><td>Base URL → <code>http://127.0.0.1:4141/gateway</code>; API key = handle <code>barrito:&lt;id&gt;</code>. The router swaps the handle for the identity's Vercel key and reverse-proxies unchanged. No translation.</td></tr>
+    <tr><td><b>Env</b></td><td>cursor-agent</td><td>Cursor's own backend can't be proxied. The shim injects <code>CURSOR_API_KEY</code> from Keychain plus <code>AGENT_CLI_CREDENTIAL_STORE=file</code> (keeps today's fix).</td></tr>
+  </tbody></table>
+  <p>Built-in harness table (shipped in the package, overridable in config):</p>
+<pre><code><span class="c"># built-ins (src/harnesses.ts) — shown as config for clarity</span>
+[harness.claude]
+bin = "claude"
+level = "full"
+
+[harness.codex]
+bin = "codex"
+env = { OPENAI_BASE_URL = "{gateway}/v1", OPENAI_API_KEY = "{handle}" }
+
+[harness.opencode]
+bin = "opencode"
+env = { AI_GATEWAY_API_KEY = "{handle}", VERCEL_AI_GATEWAY_BASE_URL = "{gateway}/v1/ai" }
+
+[harness.cursor-agent]
+bin = "cursor-agent"
+aliases = ["agent"]
+env = { CURSOR_API_KEY = "{keychain:cursor}", AGENT_CLI_CREDENTIAL_STORE = "file" }
+
+<span class="c"># custom</span>
+[harness.mybot]
+bin = "mybot"
+env = { OPENAI_BASE_URL = "{gateway}/v1", OPENAI_API_KEY = "{handle}" }</code></pre>
+  <p>Template vars: <code>{gateway}</code> = <code>http://127.0.0.1:4141/gateway</code>, <code>{handle}</code> = <code>barrito:&lt;id&gt;</code>, <code>{keychain:&lt;slot&gt;}</code> = the secret for that identity's slot (Env level only), <code>{identity}</code>.</p>
+  <p>Shim (generated, bash, true <code>exec</code> so TTY and signals stay native):</p>
+<pre><code>#!/usr/bin/env bash
+# generated by barrito — do not edit; run `barrito shim` to regenerate
+eval "$(barrito env --shell --harness claude)" || exit $?
+exec "$BARRITO_REAL_BIN" "$@"</code></pre>
+  <p><code>env</code> finds the real binary as the first match on <code>PATH</code> outside the shim dir, and prints an actionable error if it's missing.</p>
+</section>
+
+<section id="router">
+  <p class="eyebrow">Router</p>
+  <h2>Request handling</h2>
+  <p>Evolves the hand-rolled router it replaces: <code>node:http</code> + <code>fetch</code>, zero runtime deps, streaming passthrough, aborting upstream on client close, logs carry no headers or bodies.</p>
+  <table><thead><tr><th>Request</th><th>Route</th></tr></thead><tbody>
+    <tr><td>Bare Claude model (<code>claude-*</code>, <code>anthropic/claude-*</code>, <code>[1m]</code>), identity tier = <code>max</code></td><td>Direct <code>api.anthropic.com</code>. Body model normalized. Strip <code>x-barrito-*</code> and <code>x-ai-gateway-api-key</code>. Everything else unchanged.</td></tr>
+    <tr><td>Same, identity tier = <code>fallback</code> or pinned to a model</td><td>Gateway <code>/claude-code</code>; model rewritten to the active chain entry; <code>authorization</code> (Max OAuth) stripped; identity key added.</td></tr>
+    <tr><td>Explicit gateway picker ID (<code>claude-code/*</code>), <code>*-fast</code>, <code>GET /v1/models</code></td><td>Gateway, unchanged from today. Explicit choices bypass the state machine.</td></tr>
+    <tr><td><code>/gateway/*</code> with <code>Bearer barrito:&lt;id&gt;</code></td><td>Reverse proxy to <code>https://ai-gateway.vercel.sh/*</code> with the identity key. Any format.</td></tr>
+    <tr><td><code>GET /status</code>, <code>GET /health</code></td><td>Local JSON for the CLI and statusline.</td></tr>
+    <tr><td>Missing or unknown identity</td><td>400, Anthropic-shaped error: <code>barrito: no identity for this request — run barrito doctor</code>.</td></tr>
+  </tbody></table>
+  <p>The Vercel key is read from Keychain by the router (cached in memory, re-read on 401). Agents only ever hold a handle. Cursor is the one documented exception.</p>
+</section>
+
+<section id="fallback">
+  <p class="eyebrow">Fallback</p>
+  <h2>Cheap first, loudly</h2>
+  <p>A per-identity state machine, persisted to <code>~/.local/state/barrito/tiers.json</code> so restarts don't forget a spent quota.</p>
+  <table><thead><tr><th>State</th><th>Enter when</th><th>Leave when</th></tr></thead><tbody>
+    <tr><td><code>max</code></td><td>Default; reset reached; direct success after cooldown</td><td>A trigger below</td></tr>
+    <tr><td><code>fallback(quota)</code></td><td>Direct 429 with the unified status rejected, or the utilization headers say spent</td><td>Reset timestamp passes → next request probes direct</td></tr>
+    <tr><td><code>fallback(outage)</code></td><td>Direct 529/5xx/connect error, twice within 60s</td><td>Half-open after 60s: next request tries direct; success → <code>max</code>, failure → back off ×2 (max 15m)</td></tr>
+    <tr><td><code>pinned</code></td><td><code>barrito pin</code></td><td><code>barrito unpin</code></td></tr>
+  </tbody></table>
+  <ul>
+    <li><b>No failed turns.</b> The 429 or 5xx that triggers a transition arrives before any stream bytes, so the same request is retried on the chain immediately. The user sees an answer, not an error.</li>
+    <li><b>Chain walk.</b> If entry <em>n</em> fails (429/5xx), try <em>n+1</em>. When everything fails, return an Anthropic-shaped error listing each hop and its status.</li>
+    <li><b>Loud on every transition.</b> One notification (<code>osascript display notification</code>; <code>terminal-notifier</code> if present), a log line, a statusline change, and the response header. No repeats until the state changes again.</li>
+    <li><b>Never mutate model output.</b> No injected text in streams, so context stays clean.</li>
+    <li><b>Spend tracking.</b> Sum usage from response <code>usage</code> blocks on gateway hops × gateway list price (catalog fetched daily) → <code>API TODAY</code>. Shown as an estimate; Vercel's dashboard is the source of truth.</li>
+  </ul>
+  <p>Statusline: <code>init</code> sets each Claude config's <code>statusLine</code> to <code>barrito statusline</code>. If a statusline already exists, it's wrapped (<code>barrito statusline --append '&lt;existing cmd&gt;'</code>). The command reads the cwd from Claude Code's stdin JSON → identity → <code>/status</code>, with a 50ms timeout and silent degrade.</p>
+</section>
+
+<section id="config">
+  <p class="eyebrow">Config</p>
+  <h2><code>~/.config/barrito/config.toml</code></h2>
+<pre><code>port = 4141
+default = "personal"
+
+[identities.work]
+claude_config_dir = "~/.claude"
+fallback = ["zai/glm-5.3", "deepseek/deepseek-v4.1-flash"]
+match.remotes = ["github.com/acme/*"]
+match.paths = ["~/Code/acme/**"]
+keychain.gateway = "Vercel AI Gateway Work"
+keychain.cursor = "Cursor Work"
+
+[identities.personal]
+claude_config_dir = "~/.claude-personal"
+share_from = "~/.claude"      <span class="c"># symlink rules/ skills/ agents/ CLAUDE.md</span>
+fallback = ["zai/glm-5.3", "deepseek/deepseek-v4.1-flash"]
+match.remotes = ["github.com/you/*"]
+match.paths = ["~/Code/you/**"]
+keychain.gateway = "Vercel AI Gateway"
+keychain.cursor = "Cursor"
+
+[models]
+include = ["zai/*", "deepseek/*", "openai/gpt-6*", "google/gemini-3.8*", "anthropic/*"]
+exclude = ["*-preview", "*-0731"]
+require = ["tool-use"]          <span class="c"># Claude Code needs tool calling</span>
+max_input_price = 5.00          <span class="c"># $/1M input</span>
+pin = ["meta/muse-spark-1.3-contributor"]
+labels = { "openai/gpt-6-astra" = "GPT-6 Astra · heavy / 2nd opinion" }
+
+[graft]
+roots = ["~/Code", "~/emdash/repositories"]
+repos = [
+  { path = "~/Code/acme/api", summaries = false },
+  { path = "~/Code/you/side-project", summaries = false },
+]
+
+[harness.mybot]
+bin = "mybot"
+env = { OPENAI_BASE_URL = "{gateway}/v1", OPENAI_API_KEY = "{handle}" }</code></pre>
+  <p>No secrets in the file. Keychain items: <code>-s &lt;name&gt; -a barrito</code>. <code>init</code> adopts the existing <code>-a vercel-ai-gateway</code> items in place (reads them, no duplication). The Cursor keys currently inline in <code>~/Code/{acme,you}/.envrc</code> move into Keychain.</p>
+  <p>Settings fragment merged into each Claude config dir's <code>settings.json</code> (jq-style deep merge, the same idea as today's <code>install.sh</code>): <code>env.ANTHROPIC_BASE_URL</code>, <code>statusLine</code>, and the <code>/barrito</code> command. <code>modelPicker</code> and subagent files come from <code>barrito models sync</code>. Shared rules, skills and agents are symlinked from <code>share_from</code>.</p>
+</section>
+
+<section id="graft">
+  <p class="eyebrow">Graft</p>
+  <h2>Per-repo code graph, opt-in</h2>
+  <ul>
+    <li><code>barrito graft</code> scans <code>graft.roots</code> for git repos, ranks by tracked LOC (<code>git ls-files</code> + line count, cached), and shows a checklist. Choices land in <code>graft.repos</code>.</li>
+    <li>Wiring uses the proven minimal flags: <code>graft init --yes --no-global --no-statusline --no-agents --no-build</code>, then <code>graft build</code>. Installs <code>@nanonets/graft</code> if missing (with a prompt).</li>
+    <li><b>Worktrees, any host:</b> when a shim launches in a worktree of a grafted repo with no <code>graft/</code>, <code>barrito env</code> spawns a detached <code>graft build</code> and returns immediately. No per-host setup scripts.</li>
+    <li><b>Summaries</b> are off by default and toggled per repo. When on, Graft's provider points at <code>{gateway}/v1</code> with the repo's identity handle, so each repo bills its own identity's gateway.</li>
+    <li>The wizard warns that <code>graft init</code> writes tracked files (<code>.claude/</code>, <code>.mcp.json</code>, <code>AGENTS.md</code>). Committing them stays the user's call per repo.</li>
+    <li>Other transcript tooling is unaffected, except that its Claude adapter must scan both <code>~/.claude/projects</code> and <code>~/.claude-personal/projects</code>: a one-line change in your tooling repo, part of this release.</li>
+  </ul>
+</section>
+
+<section id="migrate">
+  <p class="eyebrow">Migration</p>
+  <h2>Migrating from a hand-rolled setup</h2>
+  <p>Coming from a hand-rolled claude-router launchd agent with hand-written shims and <code>.envrc</code> symlinks, <code>init</code> detects every piece below, backs it up to <code>~/.config/barrito/backup/&lt;ts&gt;/</code>, and shows the plan before acting. <code>uninstall --restore</code> puts it all back.</p>
+  <table><thead><tr><th>Today</th><th>Action</th></tr></thead><tbody>
+    <tr><td>A hand-rolled claude-router launchd agent (:4141)</td><td>Boot out and remove. <code>dev.barrito.router</code> takes the same port, so <code>ANTHROPIC_BASE_URL</code> doesn't change.</td></tr>
+    <tr><td><code>~/.local/shims/{claude,opencode,cursor-agent,agent,_ai-gateway-env.sh}</code></td><td>Replaced by generated shims. Same dir, same PATH line in <code>.zshrc</code>.</td></tr>
+    <tr><td><code>.envrc</code> symlinks in <code>~/emdash/worktrees/*</code></td><td>Removed (barrito covers Cursor and gateway). Listed first.</td></tr>
+    <tr><td><code>~/Code/acme/.envrc</code> gateway + header lines; <code>CURSOR_API_KEY</code> in both <code>.envrc</code>s</td><td>Keys moved to Keychain. <code>init</code> prints the lines to delete and doesn't edit them silently.</td></tr>
+    <tr><td>The router in your dotfiles repo + the router block of its <code>install.sh</code></td><td>Deleted in a dotfiles PR, along with the hand-kept <code>claude-settings.json</code> and <code>global/agents/</code>. <code>init</code> seeds <code>[models]</code> rules from the existing picker rows, then runs <code>models sync</code>.</td></tr>
+    <tr><td>Personal project history in <code>~/.claude/projects</code></td><td>Optional copy of matching project dirs into <code>~/.claude-personal/projects</code>.</td></tr>
+    <tr><td>Personal Claude login (new account)</td><td><code>init</code> runs <code>CLAUDE_CONFIG_DIR=~/.claude-personal claude /login</code>.</td></tr>
+  </tbody></table>
+</section>
+
+<section id="package">
+  <p class="eyebrow">Packaging</p>
+  <h2>Install and layout</h2>
+<pre><code>npx barrito init                        <span class="c"># offers global install: the service needs a stable path</span>
+brew install tbarho/tap/barrito && barrito init
+yarn global add barrito && barrito init</code></pre>
+<pre><code>barrito/
+  bin/barrito.ts           <span class="c"># CLI entry</span>
+  src/cli/                 <span class="c"># one file per command</span>
+  src/router/              <span class="c"># server, routes, tiers, gateway, ratelimit</span>
+  src/identity.ts          <span class="c"># resolve + cache</span>
+  src/harnesses.ts         <span class="c"># built-in table</span>
+  src/keychain/            <span class="c"># macos.ts, linux.ts (adapter interface)</span>
+  src/service/             <span class="c"># launchd.ts, systemd.ts (adapter interface)</span>
+  src/graft.js
+  templates/               <span class="c"># shim, plist, settings fragment</span>
+  site/                    <span class="c"># landing page</span>
+  test/</code></pre>
+  <ul>
+    <li>Strict TypeScript: Node ≥ 22.18 runs <code>.ts</code> directly; <code>tsc</code> builds <code>dist/</code> for npm. yarn. Deps: <code>@clack/prompts</code> (wizard), <code>smol-toml</code>, <code>picocolors</code>. The router path imports none of them.</li>
+    <li>npm package <code>barrito</code> (name is free). Brew formula in <code>tbarho/homebrew-tap</code> depends on <code>node</code> and installs the npm tarball. A release workflow bumps both on tag.</li>
+    <li>Service: <code>~/Library/LaunchAgents/dev.barrito.router.plist</code>, <code>KeepAlive</code>, logs at <code>~/Library/Logs/barrito.log</code> with size-based rotation in-process.</li>
+    <li>Landing page served from <code>site/</code> (Vercel).</li>
+  </ul>
+</section>
+
+<section id="linux">
+  <p class="eyebrow">Platforms</p>
+  <h2>Linux &amp; CI</h2>
+  <p>Same router, same CLI, platform adapters instead of a port. Compliance is unchanged: Max only ever flows through genuine Claude Code.</p>
+  <table><thead><tr><th>Area</th><th>Behavior</th></tr></thead><tbody>
+    <tr><td>Secrets</td><td><code>secret(ref)</code>: a plain name resolves in the platform keychain (macOS <code>security</code>, Linux <code>secret-tool</code>); <code>env:VAR</code> and <code>file:/path</code> work anywhere. Clear error if <code>secret-tool</code>/D-Bus is missing.</td></tr>
+    <tr><td>Service</td><td><code>systemd --user</code> unit (install/uninstall/status/restart, with a <code>loginctl enable-linger</code> note). <code>none</code> mode → <code>barrito serve --detach</code> (pidfile) + <code>barrito stop</code>.</td></tr>
+    <tr><td>Paths</td><td>XDG on Linux; log at <code>$XDG_STATE_HOME/barrito/barrito.log</code>; LaunchAgents are macOS-only.</td></tr>
+    <tr><td>Notify</td><td><code>notify-send</code> when a display exists; <code>::warning::</code> annotation when <code>GITHUB_ACTIONS</code>; else stderr + log.</td></tr>
+    <tr><td>Identity</td><td><code>GITHUB_REPOSITORY</code> as the remote fallback when a repo has no origin.</td></tr>
+    <tr><td>Login</td><td><code>~/.claude/.credentials.json</code> on Linux; <code>CLAUDE_CODE_OAUTH_TOKEN</code> counts as logged in.</td></tr>
+    <tr><td><code>barrito ci</code></td><td>Flags <code>--identity --gateway-key env:… --fallback --port</code>, or <code>--config</code>. Writes shims → <code>$GITHUB_PATH</code>, router env → <code>$GITHUB_ENV</code>, starts the router detached, waits for <code>/health</code>. <code>barrito ci stop</code> writes <code>barrito status --markdown</code> into <code>$GITHUB_STEP_SUMMARY</code>.</td></tr>
+    <tr><td>init</td><td>Adds the PATH line to the shell rc (bash/zsh/fish) on every platform; Linux skips the launchd/emdash migration and offers systemd.</td></tr>
+    <tr><td>doctor</td><td>Platform-aware: systemd, secret-tool, rc PATH line, CI env.</td></tr>
+    <tr><td>Tests/CI</td><td>Matrix <code>macos-latest</code> + <code>ubuntu-latest</code> (<code>yarn verify</code>, <code>yarn build</code>, packed-tarball install smoke); ubuntu <code>barrito ci</code> e2e against fake upstreams; <code>node:22-slim</code> container job (no systemd/D-Bus) for <code>env:</code>/<code>file:</code> + <code>--detach</code>; release on tag → npm + brew.</td></tr>
+  </tbody></table>
+  <p class="cap">github actions</p>
+<pre><code>- uses: actions/setup-node@v4
+  with: { node-version: 22 }
+- run: npx barrito ci --identity ci --gateway-key env:AI_GATEWAY_API_KEY --fallback zai/glm-5.3
+  env:
+    AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+- run: claude -p "fix the failing test"
+  env:
+    CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+- if: always()
+  run: npx barrito ci stop    # writes tier changes + API spend to the step summary</code></pre>
+</section>
+
+<section id="tests">
+  <p class="eyebrow">Tests</p>
+  <h2>What proves it</h2>
+  <ul>
+    <li><b>Router unit</b> (mock upstreams on <code>node:http</code>; upstream URLs overridable as today): route table, header stripping per path, model normalization, abort propagation, streaming integrity.</li>
+    <li><b>State machine</b>: quota 429 → fallback with the same request retried → reset → direct; outage breaker open/half-open/backoff; chain walk; all-fail error shape; pin and unpin; persistence across restart.</li>
+    <li><b>Identity</b>: table tests for env, remote (ssh/https/enterprise hosts), path, default, cache invalidation on remote change.</li>
+    <li><b>Shim e2e</b>: <code>env -i PATH=… HOME=…</code> launch from a fake emdash worktree resolves the right identity for each harness, and the real binary gets the expected env (stub binaries print their env).</li>
+    <li><b>Models sync</b>: fixture catalog → rules → snapshot of <code>modelPicker</code> + agent files; second run = no diff; retired model flagged in chain/subagents; hand labels preserved.</li>
+    <li><b>Gateway proxy</b>: handle swap, unknown handle → 401, OpenAI and Anthropic paths both pass through byte-for-byte.</li>
+    <li><b>init</b>: <code>--dry-run</code> snapshot against a fixture HOME with today's setup; idempotent second run = no diff; <code>uninstall --restore</code> round-trip.</li>
+    <li><b>Manual acceptance</b>: emdash api worktree → work Max; dotfiles worktree → personal Max; Conductor side-project workspace → personal; forced quota (mock) → notification + statusline + GLM answer; Codex and OpenCode in an acme repo bill the acme gateway team (verify in the Vercel dashboard).</li>
+  </ul>
+</section>
+
+<section id="tasks">
+  <p class="eyebrow">Sequencing</p>
+  <h2>Task order (one release)</h2>
+  <ol class="steps">
+    <li>Repo scaffold, config schema + loader, keychain + service adapters.</li>
+    <li>Identity resolver + <code>which</code> + cache.</li>
+    <li>Router: port the legacy router, add identity, the gateway proxy, <code>/status</code>.</li>
+    <li>Tier state machine, ratelimit header parsing, notifications, the response header, spend estimate.</li>
+    <li>Harness table, <code>env</code>/<code>exec</code>/<code>shim</code>, shim template.</li>
+    <li><code>status</code>, <code>doctor</code>, <code>pin</code>, <code>logs</code>, <code>statusline</code>, <code>/barrito</code> slash command.</li>
+    <li><code>models sync|search|add|rm</code> + catalog cache + doctor checks.</li>
+    <li>Graft scan/wire/build + background worktree build.</li>
+    <li><code>init</code> wizard (detect, migrate, logins, write) + <code>uninstall --restore</code>.</li>
+    <li>Tests (written alongside each step, gated here), README, landing page, npm + brew release.</li>
+    <li>Cut over the machine: run <code>init</code>, dotfiles PR (remove router + install block), transcript-tooling adapter line, restart emdash/Conductor, run acceptance.</li>
+  </ol>
+</section>
+
+<section id="done">
+  <p class="eyebrow">Done</p>
+  <h2>Definition of done</h2>
+  <ul class="check">
+    <li><code>brew install tbarho/tap/barrito &amp;&amp; barrito init</code> works on a clean macOS user, and on a machine with a hand-rolled setup migrates it with a working restore.</li>
+    <li>Every repo under <code>~/Code/{acme,you}</code> and every emdash/Conductor worktree resolves to the right identity for claude, codex, opencode and cursor-agent.</li>
+    <li>Max quota exhaustion never errors a turn: it falls to GLM 5.3 with a notification and statusline change, and returns to Max after reset with a notification.</li>
+    <li>Both identities' <code>/model</code> pickers are generated by <code>barrito models sync</code>; rerun is a no-op; <code>doctor</code> flags new and retired models.</li>
+    <li>No Vercel key in any agent's environment (Cursor key is the documented exception).</li>
+    <li>Max OAuth never leaves the genuine Claude Code → Anthropic path. Verified by test: the gateway path strips <code>authorization</code>, the direct path accepts only Full-level traffic.</li>
+    <li>Linux and CI jobs green: the <code>ubuntu-latest</code> matrix job and the <code>node:22-slim</code> container job (env:/file: secrets, <code>serve --detach</code>) both pass.</li>
+    <li>A CI run that hits a mocked 429 falls back to GLM instead of failing the job, and writes the warning annotation and the step summary.</li>
+    <li>Old router, shims and symlinks removed; the dotfiles PR is merged; transcript tooling reads both roots.</li>
+    <li><code>barrito doctor</code> all ✓; test suite green; landing page live.</li>
+  </ul>
+</section>
+
+<section id="verify">
+  <p class="eyebrow">Verify during implementation</p>
+  <h2>Assumptions to confirm</h2>
+  <ul>
+    <li>Exact names and semantics of Anthropic's unified rate-limit response headers on subscription traffic (status, reset, 5h/7d utilization). Read them from real responses; the state machine must still work from 429 alone if they're absent.</li>
+    <li>Claude Code keys Keychain credentials per <code>CLAUDE_CONFIG_DIR</code> (observed: 9 <code>Claude Code-credentials-&lt;hash&gt;</code> items). Confirm two dirs hold two logins side by side.</li>
+    <li>OpenCode's Vercel provider honors a base URL override and a handle in place of the key; otherwise use an <code>opencode.json</code> provider block pointing at <code>{gateway}</code>.</li>
+    <li>The gateway <code>/claude-code</code> endpoint serves GLM/DeepSeek for Claude Code-shaped requests when <code>authorization</code> is absent (today's picker rows already do this; confirm it with OAuth stripped).</li>
+    <li>The gateway catalog exposes a tool-use tag and per-model pricing. If the tag is missing, ship a small built-in allowlist for <code>require</code>.</li>
+    <li>Claude Code accepts a large <code>modelPicker</code> (100+ rows for <code>--all</code>) without UI issues.</li>
+    <li>emdash's env allowlist passes <code>PATH</code> through, so shims are found. Today's shims prove it; re-check after the cutover.</li>
+  </ul>
+</section>
+</main>
+</div>
+</body>
+</html>
