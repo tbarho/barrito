@@ -1,6 +1,7 @@
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import { stripVTControlCharacters as strip } from 'node:util'
 import path from 'node:path'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -63,8 +64,12 @@ const fakes = () => {
   return { calls, items, exec, keychain, io }
 }
 
+// every ctx.print line lands here too, so stdout() sees the whole transcript
+const printed: string[] = []
+
 const stdout = async (fn: () => Promise<unknown>): Promise<string> => {
   const chunks: string[] = []
+  const from = printed.length
   const write = process.stdout.write.bind(process.stdout)
   process.stdout.write = ((s: unknown) => { chunks.push(String(s)); return true }) as typeof process.stdout.write
   try {
@@ -72,7 +77,7 @@ const stdout = async (fn: () => Promise<unknown>): Promise<string> => {
   } finally {
     process.stdout.write = write
   }
-  return chunks.join('')
+  return chunks.join('') + printed.slice(from).join('\n')
 }
 
 // Ctx.exit is `never` (bin/init contract); the fake must return so tests can keep
@@ -84,7 +89,7 @@ const run = async (argv: string[], f: ReturnType<typeof fakes>, io: Io = f.io): 
   const out: string[] = []
   await init(argv, {
     config: null,
-    print: (s: string) => { out.push(s) },
+    print: (s: string) => { out.push(s); printed.push(s) },
     exit: fakeExit(out),
     io,
   })
@@ -116,7 +121,7 @@ test('--dry-run --yes: prints the plan, writes nothing, exits 0', async () => {
   const text = await stdout(async () => {
     await init(['--dry-run', '--yes'], {
       config: null,
-      print: (s: string) => { out.push(s) },
+      print: (s: string) => { out.push(s); printed.push(s) },
       exit: fakeExit(out),
       io: f.io,
     })
@@ -127,7 +132,7 @@ test('--dry-run --yes: prints the plan, writes nothing, exits 0', async () => {
   assert.match(plan, /replace legacy shims/)
   assert.match(plan, /remove 3 \.envrc symlink/)
   assert.match(plan, /\+ copy 2 keychain keys into barrito-owned items \(one macOS prompt each\)/)
-  assert.match(text, /work and personal have no match globs yet — every directory resolves to the default identity/)
+  assert.match(text, /match {4}! none yet — every directory resolves to the default identity/)
   assert.match(plan, /retired: openai\/gpt-5\.6-luna \(dropped\)/)
   assert.match(plan, /seed \[models\]/)
   assert.match(text, /dry run — nothing written/)
@@ -233,7 +238,7 @@ test('uninstall: removes the marked PATH block from the shell rc, keeps hand-wri
     const out: string[] = []
     await uninstall(['--yes'], {
       config: load(),
-      print: (s: string) => { out.push(s) },
+      print: (s: string) => { out.push(s); printed.push(s) },
       exit: fakeExit(out),
       io: { exec: (bin: string, args: string[]): string => '' },
     })
@@ -263,7 +268,7 @@ test('uninstall: strips only barrito-owned pieces, unwraps statusline, --restore
   const out: string[] = []
   await uninstall(['--restore', '--yes'], {
     config: load(),
-    print: (s: string) => { out.push(s) },
+    print: (s: string) => { out.push(s); printed.push(s) },
     exit: fakeExit(out),
     io,
   })
@@ -315,7 +320,7 @@ test('uninstall --restore: config.toml backed up by init comes back, pointing at
   const out: string[] = []
   await uninstall(['--restore', '--yes'], {
     config: load(),
-    print: (s: string) => { out.push(s) },
+    print: (s: string) => { out.push(s); printed.push(s) },
     exit: fakeExit(out),
     io,
   })
@@ -409,9 +414,6 @@ test('interactive: a third identity via scripted prompts lands in config with it
   f.items['Cursor SIDE'] = 'already-in-keychain'
   const prompts = script([
     [/back up .* and replace\?/, true],
-    [/When Max runs out/, 'cheap'],
-    [/Compress tool output with rtk\?/, true],               // token savers
-    [/How terse should replies be\? \(caveman\)/, 'ultra'],
     [/remotes glob/, 'github.com/work/*'],                  // work — the prompt's default
     [/paths glob/, '~/Code/work/**'],
     [/remotes glob/, 'github.com/you/*'],                   // personal
@@ -429,6 +431,9 @@ test('interactive: a third identity via scripted prompts lands in config with it
     [/share rules\/skills\/agents/, true],                   // personal
     [/copy .* personal project histories/, true],            // personal
     [/logged in\? \(re-checks\)/, false],                     // side — its dir is brand new
+    [/When Max runs out/, 'cheap'],
+    [/Compress tool output with rtk\?/, true],               // token savers
+    [/How terse should replies be\? \(caveman\)/, 'ultra'],
     [/write it\?/, true],
   ])
   const plan = await run([], f, { ...f.io, prompts })
@@ -504,9 +509,6 @@ test('login step: "logged in? (re-checks)" re-runs the injected account check, u
   }
   const prompts = script([
     [/back up .* and replace\?/, true],
-    [/When Max runs out/, 'cheap'],
-    [/Compress tool output with rtk\?/, true],
-    [/How terse should replies be\? \(caveman\)/, 'lite'],
     [/remotes glob/, 'github.com/work/*'],
     [/paths glob/, '~/Code/work/**'],
     [/remotes glob/, 'github.com/you/*'],
@@ -517,6 +519,9 @@ test('login step: "logged in? (re-checks)" re-runs the injected account check, u
     [/logged in\? \(re-checks\)/, true],
     [/share rules\/skills\/agents/, true],
     [/copy .* personal project histories/, true],
+    [/When Max runs out/, 'cheap'],
+    [/Compress tool output with rtk\?/, true],
+    [/How terse should replies be\? \(caveman\)/, 'lite'],
     [/write it\?/, true],
   ])
   const text = await stdout(async () => { await run([], f, { ...f.io, prompts }) })
@@ -524,18 +529,15 @@ test('login step: "logged in? (re-checks)" re-runs the injected account check, u
   assert.match(text, /still not logged in/)
   assert.match(text, /✓ logged in \(me@x\.test\)/)
   assert.ok(!f.calls.some((c) => c.spawn && c.bin === 'claude'), 'claude is never spawned')
-  // "When Max runs out" is the select's message alone — the old p.log.step duplicate is gone
-  // (the select itself is the scripted prompt, which matched the message exactly once)
-  assert.ok(!text.includes('When Max runs out'), 'no step heading printed before the select')
+  // the select's answer renders as the section's one row — never a separate heading + answer block
+  assert.equal(text.match(/When Max runs out/g)?.length, 1)
+  assert.match(text, /◇ {2}When Max runs out\n│ {2}● cheap first, loudly/)
 })
 
 test('login step: three failed re-checks continue with the doctor note', async () => {
   const f = fakes()
   const prompts = script([
     [/back up .* and replace\?/, true],
-    [/When Max runs out/, 'cheap'],
-    [/Compress tool output with rtk\?/, true],
-    [/How terse should replies be\? \(caveman\)/, 'lite'],
     [/remotes glob/, 'github.com/work/*'],
     [/paths glob/, '~/Code/work/**'],
     [/remotes glob/, 'github.com/you/*'],
@@ -547,6 +549,9 @@ test('login step: three failed re-checks continue with the doctor note', async (
     [/logged in\? \(re-checks\)/, true],
     [/share rules\/skills\/agents/, true],
     [/copy .* personal project histories/, true],
+    [/When Max runs out/, 'cheap'],
+    [/Compress tool output with rtk\?/, true],
+    [/How terse should replies be\? \(caveman\)/, 'lite'],
     [/write it\?/, true],
   ])
   const text = await stdout(async () => { await run([], f, { ...f.io, prompts }) })
@@ -589,8 +594,8 @@ test('interactive: an existing [transforms] table wins — the step is skipped',
   // no rtk/caveman answers queued — the strict script fails if the step prompts anyway
   const prompts = script([
     [/back up .* and replace\?/, true],
-    [/When Max runs out/, 'cheap'],
     [/Add another identity\?/, false],
+    [/When Max runs out/, 'cheap'],
     [/write it\?/, true],
   ])
   const text = await stdout(async () => { await run([], f, { ...f.io, prompts }) })
@@ -629,4 +634,95 @@ test('a config with per-identity [transforms] keeps them through init (values wi
   const config = load()
   assert.deepEqual(config.transforms, { rtk: false, caveman: 'ultra' })
   assert.deepEqual(config.identities.work!.transforms, { caveman: 'full' })
+})
+
+// ── rendered transcript (the spine) ──────────────────────────────────────────
+
+const transcript = async (argv: string[], f: ReturnType<typeof fakes>, io: Io = f.io): Promise<string[]> => {
+  const text = await stdout(() => run(argv, f, io))
+  return strip(text).replace(/\d{4}-\d\d-\d\dT\d\d:\d\d/g, '<ts>').split('\n')
+}
+
+test('--dry-run --yes renders one tight spine: sections, aligned keys, plan inside, single outro', async () => {
+  const lines = await transcript(['--dry-run', '--yes'], fakes())
+  assert.match(lines[0] ?? '', /^barrito v\d+\.\d+\.\d+ · one router, every identity$/)
+  assert.equal(lines[1], '')
+  const body = lines.slice(2).filter(Boolean)
+  assert.deepEqual(body.filter((l) => l.startsWith('◇')), [
+    '◇  Agents found',
+    '◇  Existing setup found',
+    '◇  Identity · work',
+    '◇  Identity · personal (default)',
+    '◇  When Max runs out',
+    '◇  Token savers',
+    '◇  Graft which repos?  (ranked by size)',
+    '◇  Plan',
+  ])
+  // every line is on the spine; the only bare `│` is the one spacer right before the next block
+  assert.ok(body.every((l) => /^(◇|└|│)/.test(l)), body.join('\n'))
+  body.forEach((l, i) => {
+    if (l !== '│') return
+    assert.match(body[i + 1] ?? '', /^(◇|└)/, `blank spine row inside a section at line ${i}`)
+  })
+  // answers render inline under their section
+  assert.ok(body.includes('│  back up and replace? Yes'))
+  assert.ok(body.includes('│  ● cheap first, loudly   glm-5.3 → deepseek-v4.1-flash'))
+  // aligned key column: every identity row's value starts at the same column
+  const kv = body.filter((l) => /^│ {2}(match|claude|gateway|cursor) {2,}\S/.test(l))
+  assert.equal(kv.length, 8)
+  assert.equal(new Set(kv.map((l) => l.search(/(?<=^│ {2}\S+ +)\S/))).size, 1)
+  assert.ok(kv.some((l) => l.startsWith('│  claude   ~/.claude  ✓ work@example.com')))
+  // the plan lives inside the spine, one signed row per action
+  const planAt = body.indexOf('◇  Plan')
+  const plan = body.slice(planAt + 1, body.indexOf('│', planAt))
+  assert.ok(plan.length > 5)
+  assert.ok(plan.every((l) => /^│ {2}[~+\-±!] /.test(l)), plan.join('\n'))
+  // exactly one outro, last
+  assert.deepEqual(body.filter((l) => l.startsWith('└')), ['└  dry run — nothing written'])
+  assert.equal(body.at(-1), '└  dry run — nothing written')
+  assert.equal(body.at(-2), '│')
+})
+
+test('agent versions are humanized — raw --version chatter never reaches the transcript', async () => {
+  const f = fakes()
+  f.io.exec = (bin: string, args: string[]): string => {
+    if (args[0] === 'print') throw new Error('not loaded')
+    if (args[0] === '--version') return '2.1.287 (Claude Code)\nextra noise\n'
+    return ''
+  }
+  const lines = await transcript(['--dry-run', '--yes'], f)
+  assert.ok(lines.includes('│  claude 2.1.287 · codex 2.1.287 · opencode 2.1.287 · cursor-agent 2.1.287'), lines.join('\n'))
+  assert.ok(!lines.join('\n').includes('extra noise'))
+})
+
+test('NO_COLOR: ASCII spine, no ANSI', async () => {
+  process.env.NO_COLOR = '1'
+  try {
+    const f = fakes()
+    const raw = await stdout(() => run(['--dry-run', '--yes'], f))
+    assert.ok(!raw.includes('\u001b'), 'no escape codes')
+    assert.ok(!/[│◇└◆✓✗●]/.test(raw), 'no unicode glyphs')
+    const lines = raw.split('\n')
+    assert.ok(lines.includes('o  Agents found'))
+    assert.ok(lines.some((l) => /^\| {2}claude {3}~\/\.claude {2}ok work@example\.com$/.test(l)), raw)
+    assert.equal(lines.at(-1), '+  dry run — nothing written')
+  } finally {
+    delete process.env.NO_COLOR
+  }
+})
+
+test('non-TTY apply: steps print as settled lines, no cursor control, notes stay on the spine', async () => {
+  const f = fakes()
+  const raw = await stdout(() => run(['--yes'], f))
+  assert.ok(!raw.includes('\u001b['), 'piped output never carries cursor movement')
+  const lines = strip(raw).split('\n')
+  const at = lines.findIndex((l) => l === '│  write it? Yes')
+  assert.ok(at > 0)
+  const steps = lines.slice(at + 2).filter((l) => l.startsWith('◇'))
+  assert.ok(steps.length > 5)
+  assert.ok(steps.some((l) => /^◇ {2}write ~\/\.config\/barrito\/config\.toml/.test(l)))
+  assert.ok(!lines.some((l) => l.startsWith('◆')), 'the running marker only exists on a TTY')
+  assert.equal(lines.filter((l) => l.startsWith('└')).length, 1)
+  assert.match(lines.at(-1) ?? '', /^└ {2}Wrote config, \d+ shims, router service, (PATH line, )?statusline\. Next: barrito doctor$/)
+  assert.match(lines.at(-3) ?? '', /restart emdash and Conductor/)
 })

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, chmodSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { default as doctor, diagnose } from '../src/cli/doctor.ts'
+import { stripVTControlCharacters as strip } from 'node:util'
+import { default as doctor, diagnose, summary } from '../src/cli/doctor.ts'
 import type { DiagnoseOpts } from '../src/cli/doctor.ts'
 import type { CommandCtx, Config, DoctorCheck, Identity, ModelRules } from '../src/types.ts'
 
@@ -158,7 +159,54 @@ test('default prints ✓ lines and exits 0 when nothing fails', async () => {
   const c = mkCtx(config())
   await doctor([], c, opts())
   assert.equal(c.codes.length, 0)
-  assert.equal(c.printed.every((l) => l.startsWith('✓ ')), true)
+  // piped (non-TTY): one greppable line per check, no box-drawing, then the summary
+  const checks = c.printed.slice(0, -1)
+  assert.equal(checks.every((l) => l.startsWith('✓ ')), true)
+  assert.match(c.printed.at(-1) ?? '', /^\d+ ok$/)
+  assert.ok(!c.printed.some((l) => /[│◇└]/.test(l)))
+})
+
+const tty = { write: () => true, isTTY: true, columns: 200 }
+
+test('terminal: checks render inside the spine with a one-line summary outro', async () => {
+  shims()
+  cacheCatalog()
+  const c = mkCtx(config())
+  await doctor([], c, opts({ term: tty, pathEnv: '/usr/bin:/bin' }))
+  const lines = c.printed.map(strip)
+  assert.equal(lines[0], 'barrito doctor')
+  assert.equal(lines[2], '◇  Checks')
+  const rows = lines.slice(3, -2)
+  assert.ok(rows.length > 2)
+  // every check is a tight spine row; a long one wraps under its text with a hanging indent
+  assert.ok(rows.every((l) => /^│ {2}([✓!✗] | {2}\S)/.test(l)), lines.join('\n'))
+  assert.equal(lines.at(-2), '│')
+  assert.match(lines.at(-1) ?? '', /^└ {2}\d+ ok( · \d+ warnings?)? · \d+ failed$/)
+  assert.deepEqual(c.codes, [1])
+})
+
+test('GITHUB_ACTIONS keeps plain lines even on a TTY', async () => {
+  const c = mkCtx(config())
+  await doctor([], c, opts({ term: tty, env: { GITHUB_ACTIONS: 'true', LANG: 'en_US.UTF-8' } }))
+  assert.ok(!c.printed.some((l) => /[│◇└]/.test(l)))
+  assert.match(c.printed.at(-1) ?? '', /^\d+ ok/)
+})
+
+test('NO_COLOR: ASCII marks and spine', async () => {
+  shims()
+  cacheCatalog()
+  const c = mkCtx(config())
+  await doctor([], c, opts({ term: tty, env: { NO_COLOR: '1', LANG: 'en_US.UTF-8' } }))
+  assert.ok(!c.printed.some((l) => /[│◇└✓✗\u001b]/.test(l)), 'no unicode glyphs, no ANSI')
+  assert.equal(c.printed[2], 'o  Checks')
+  assert.ok(c.printed.slice(3, -2).every((l) => /^\| {2}(ok|!|x) /.test(l)))
+  assert.match(c.printed.at(-1) ?? '', /^\+ {2}\d+ ok/)
+})
+
+test('summary pluralizes and drops empty buckets', () => {
+  const r = (level: DoctorCheck['level']): DoctorCheck => ({ level, text: '' })
+  assert.equal(summary([r('ok'), r('ok'), r('warn')]), '2 ok · 1 warning')
+  assert.equal(summary([r('ok'), r('warn'), r('warn'), r('fail')]), '1 ok · 2 warnings · 1 failed')
 })
 
 test('shims dir not on PATH fails', async () => {

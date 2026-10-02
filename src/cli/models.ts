@@ -5,6 +5,8 @@ import { paths } from '../paths.ts'
 import { get } from '../keychain/index.ts'
 import * as catalog from '../catalog.ts'
 import { per1m, sync } from '../models.ts'
+import { create, tilde } from '../ui.ts'
+import type { Level, Ui } from '../ui.ts'
 import type { CatalogModel, CommandCtx, CommandFn, Config, Removed, SyncDir, SyncResult } from '../types.ts'
 
 const loadCatalog = async (config: Config, { write = true }: { write?: boolean } = {}): Promise<{ models: CatalogModel[]; warnings: string[] }> => {
@@ -38,29 +40,34 @@ const show = async (ctx: CommandCtx): Promise<void> => {
   })
 }
 
-const bucket = (b: SyncDir, models: CatalogModel[], ctx: CommandCtx): void => {
+const bucket = (b: SyncDir, models: CatalogModel[], ui: Ui): void => {
+  const { c } = ui
+  const ids = [...b.added, ...b.removed.map((r) => r.id), ...b.updated]
+  const w = ids.reduce((memo, id) => Math.max(memo, id.length), 0) + 2
   b.added.forEach((id) => {
     const p = catalog.price(models, id)
     const money = p ? `${per1m(p.input)} / ${per1m(p.output)}   ` : ''
-    ctx.print(`  ${pc.green('+')} ${id.padEnd(32)} ${money}${pc.green('new')}`)
+    ui.item(c.green('+'), `${id.padEnd(w)}${c.dim(money)}${c.green('new')}`)
   })
-  b.removed.forEach(({ id, reason }: Removed) => ctx.print(reason === 'retired'
-    ? `  ${pc.red('-')} ${id.padEnd(32)} ${pc.red('retired from gateway')}`
-    : `  ${pc.red('-')} ${id.padEnd(32)} ${pc.red(`no longer matches your rules (barrito models add ${id} to keep)`)}`))
-  b.updated.forEach((id) => ctx.print(`  ${pc.yellow('~')} ${id.padEnd(32)} ${pc.yellow('updated')}`))
-  ctx.print(`  = ${b.unchanged.length} unchanged`)
+  b.removed.forEach(({ id, reason }: Removed) => ui.item(c.red('-'), `${id.padEnd(w)}${c.red(reason === 'retired'
+    ? 'retired from gateway'
+    : `no longer matches your rules (barrito models add ${id} to keep)`)}`))
+  b.updated.forEach((id) => ui.item(c.yellow('~'), `${id.padEnd(w)}${c.yellow('updated')}`))
+  ui.item(c.dim('='), c.dim(`${b.unchanged.length} unchanged`))
 }
 
-const diff = (result: SyncResult, models: CatalogModel[], ctx: CommandCtx): void => {
+const diff = (result: SyncResult, models: CatalogModel[], ui: Ui): void => {
   const healthy = result.dirs.filter((d) => d.ok)
-  if (!healthy.length) return
   const [first] = healthy
   if (!first) return
   const sig = (b: SyncDir): string => JSON.stringify([b.added, b.removed, b.unchanged, b.updated])
-  if (healthy.length === 1 || healthy.every((d) => sig(d) === sig(first))) return bucket(first, models, ctx)
+  if (healthy.every((d) => sig(d) === sig(first))) {
+    ui.section(`Picker ${ui.g.dot} ${healthy.map((d) => tilde(d.dir)).join(', ')}`)
+    return bucket(first, models, ui)
+  }
   healthy.forEach((d) => {
-    ctx.print(pc.bold(d.dir))
-    bucket(d, models, ctx)
+    ui.section(`Picker ${ui.g.dot} ${tilde(d.dir)}`)
+    bucket(d, models, ui)
   })
 }
 
@@ -74,17 +81,29 @@ const syncCmd = async (args: string[], ctx: CommandCtx): Promise<void> => {
     },
   })
   const { models, warnings } = await loadCatalog(ctx.config, { write: !values['dry-run'] })
-  warnings.forEach((w) => ctx.print(pc.yellow(w)))
   const result = await sync({ config: ctx.config, catalog: models, dryRun: values['dry-run'], all: values.all })
-  if (values.json) return ctx.print(JSON.stringify(result, null, 2))
+  if (values.json) {
+    warnings.forEach((w) => ctx.print(pc.yellow(w)))
+    return ctx.print(JSON.stringify(result, null, 2))
+  }
 
-  diff(result, models, ctx)
-  result.dirs.filter((d) => !d.ok).forEach((d) => ctx.print(`${pc.red('✗')} ${d.dir}  ${d.error}`))
-  result.skipped.forEach((p) => ctx.print(`${pc.yellow('!')} pinned ${p.id} skipped: ${p.why}`))
-  result.protected.forEach((p) => ctx.print(`${pc.yellow('!')} kept hand-written ${p}`))
-  result.missing.forEach((id) => ctx.print(`${pc.red('✗')} ${id}  not in gateway catalog`))
-  ctx.print(`  → ${result.dirs.filter((d) => d.ok).map((d) => d.dir).join(', ')}`)
-  if (values['dry-run']) ctx.print(pc.dim('(dry run — run `barrito models sync` to write)'))
+  const ui = create({ print: ctx.print })
+  diff(result, models, ui)
+  const notes = [
+    ...warnings.map((w): [Level, string] => ['warn', w.replace(/^! /, '')]),
+    ...result.dirs.filter((d) => !d.ok).map((d): [Level, string] => ['bad', `${tilde(d.dir)}  ${d.error ?? ''}`]),
+    ...result.skipped.map((p): [Level, string] => ['warn', `pinned ${p.id} skipped: ${p.why}`]),
+    ...result.protected.map((p): [Level, string] => ['warn', `kept hand-written ${p}`]),
+    ...result.missing.map((id): [Level, string] => ['bad', `${id}  not in gateway catalog`]),
+  ]
+  if (notes.length) {
+    ui.section('Notes')
+    notes.forEach(([level, text]) => ui.item(ui.mark(level), text))
+  }
+  const synced = result.dirs.filter((d) => d.ok).map((d) => tilde(d.dir)).join(', ')
+  ui.outro(values['dry-run']
+    ? ui.c.dim(`dry run — run \`barrito models sync\` to write ${synced}`)
+    : `synced ${ui.g.arrow} ${synced || 'nothing'}`)
   if (result.dirs.some((d) => !d.ok)) ctx.exit(1)
 }
 

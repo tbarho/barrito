@@ -456,3 +456,18 @@ test('unpin with no args prints usage and exits 2', async () => {
   assert.match(errs.join('\n'), /usage: barrito unpin/)
   assert.deepEqual(c.codes, [2])
 })
+
+test('table columns grow for long cells so rows stay aligned; paint colors tiers after padding', () => {
+  const long = 'a-very-long-identity'
+  const lines = table({ identities: { [long]: idn(), personal: idn() } }, payload)
+  const col = (l: string): number => l.indexOf('MAX 5H') >= 0 ? l.indexOf('MAX 5H') : l.search(/\d+%|—/)
+  assert.equal(new Set(lines.map(col)).size, 1, lines.join('\n'))
+  const tag = (v: string | number | null | undefined): string => {
+    const s = String(v)
+    return `<${s.trim()}>${' '.repeat(s.length - s.trimEnd().length)}`
+  }
+  const painted = table({ identities: { work: idn(), personal: idn() } }, payload, { dim: tag, green: tag, yellow: tag })
+  assert.match(painted[0] ?? '', /^<IDENTITY> {3}<TIER>/)
+  assert.match(painted[1] ?? '', /^work {7}<max>/)
+  assert.match(painted[2] ?? '', /^personal {3}<! glm-5\.3>/)
+})

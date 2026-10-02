@@ -1,4 +1,5 @@
 import fsx from 'node:fs'
+import { tilde } from './ui.ts'
 import path from 'node:path'
 import { paths, home, root, platform } from './paths.ts'
 import * as harnesses from './harnesses.ts'
@@ -90,6 +91,7 @@ export interface ApplyOpts {
   service?: ServiceIo
   settings?: SettingsIo
   print?: Print
+  step?: (action: Action) => void
   graftExec?: GraftRun
   backup?: Backup
   config?: Config | null
@@ -130,10 +132,7 @@ const jsonFile = (fs: Fs, file: string): unknown => {
 
 const isObj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
 
-export const short = (p: string | null | undefined): string => {
-  const h = home()
-  return typeof p === 'string' && p.startsWith(h) ? `~${p.slice(h.length)}` : p ?? ''
-}
+export const short = tilde
 
 const quote = (s: string): string => `'${String(s).replaceAll("'", "'\\''")}'`
 
@@ -573,6 +572,7 @@ export const apply = async (actions: Action[], opts: ApplyOpts = {}): Promise<Co
   }
 
   for (const action of actions) {
+    opts.step?.(action)
     if (action.kind === 'backup') {
       action.files.forEach((file) => {
         backup?.save(file)

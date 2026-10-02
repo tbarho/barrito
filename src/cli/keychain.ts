@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { platform } from '../paths.ts'
 import * as keychain from '../keychain/index.ts'
 import * as cfg from '../config.ts'
+import { create } from '../ui.ts'
 import type { CommandCtx, Config, Exec, Identity } from '../types.ts'
 
 export interface OwnOpts {
@@ -75,9 +76,17 @@ export default async (argv: string[], ctx: CommandCtx, opts: OwnOpts = {}): Prom
     ctx.print('usage: barrito keychain own')
     return ctx.exit(2)
   }
-  if (argv[0] === 'trust') ctx.print('trust runs own now — keys are copied into barrito-owned items instead of re-trusting foreign ones')
-  ctx.print('copying each foreign key into a barrito-owned item — macOS will ask once per key; click Allow')
+  const ui = create({ print: ctx.print })
+  ui.section('Keychain')
+  if (argv[0] === 'trust') ui.note('trust runs own now — keys are copied into barrito-owned items instead of re-trusting foreign ones')
+  ui.warn('copying each foreign key into a barrito-owned item — macOS will ask once per key; click Allow')
   const { lines, changed } = own(ctx.config.identities, opts)
-  lines.forEach(ctx.print)
+  lines.forEach((line) => {
+    if (line.startsWith('✓ ')) return ui.item(ui.mark('ok'), line.slice(2))
+    if (line.startsWith('! ')) return ui.warn(line.slice(2))
+    ui.row(line)
+  })
+  const copied = lines.filter((l) => l.startsWith('✓ copied')).length
+  ui.outro(changed ? `${copied} key${copied === 1 ? '' : 's'} now barrito-owned ${ui.g.dot} config updated` : 'nothing changed')
   if (changed) (opts.save ?? ((config: Config) => cfg.save(config)))(ctx.config)
 }

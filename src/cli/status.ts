@@ -1,3 +1,4 @@
+import pc from 'picocolors'
 import { parseArgs } from 'node:util'
 import { paths } from '../paths.ts'
 import { glyphs } from '../glyphs.ts'
@@ -112,25 +113,39 @@ const ids = (config: { identities?: Record<string, unknown> } | null, data: Stat
   ...Object.keys(data?.identities ?? {}).filter((id) => !config?.identities?.[id]),
 ]
 
-export const table = (config: { identities?: Record<string, unknown> } | null, data: StatusData | null): string[] => {
-  const row = (id: string): string => {
+type Paint = Pick<ReturnType<typeof pc.createColors>, 'dim' | 'green' | 'yellow'>
+
+// columns keep their classic widths and grow for longer cells, so every row stays aligned;
+// paint colors after padding (max green, fallback yellow, header dim) — plain by default
+export const table = (
+  config: { identities?: Record<string, unknown> } | null,
+  data: StatusData | null,
+  paint: Paint = pc.createColors(false),
+): string[] => {
+  const head = ['IDENTITY', 'TIER', 'MAX 5H', 'MAX 7D', 'RESETS', 'API TODAY', 'TRANSFORMS']
+  const min = [11, 14, 9, 9, 9, 11, 0]
+  const rows = ids(config, data).map((id) => {
     const s = data?.identities?.[id]
-    const tier = !s || s.tier === 'max' || s.pin === 'max'
-      ? 'max'
-      : `${glyphs.warn} ${short(s.model ?? '')}`
-    return [
-      id.padEnd(11),
-      tier.padEnd(14),
-      pct(s?.util5h).padEnd(9),
-      pct(s?.util7d).padEnd(9),
-      (s?.resetAt ? hhmm(s.resetAt) : '—').padEnd(9),
-      `$${Number(data?.spend?.[id] ?? 0).toFixed(2)}`.padEnd(11),
-      cellTransforms(data?.transforms?.[id]),
-    ].join('')
-  }
+    const max = !s || s.tier === 'max' || s.pin === 'max'
+    return {
+      max,
+      cells: [
+        id,
+        max ? 'max' : `${glyphs.warn} ${short(s.model ?? '')}`,
+        pct(s?.util5h),
+        pct(s?.util7d),
+        s?.resetAt ? hhmm(s.resetAt) : '—',
+        `$${Number(data?.spend?.[id] ?? 0).toFixed(2)}`,
+        cellTransforms(data?.transforms?.[id]),
+      ],
+    }
+  })
+  const widths = min.map((w, i) => i === min.length - 1 ? 0 : Math.max(w, ...[head, ...rows.map((r) => r.cells)].map((c) => (c[i] ?? '').length + 2)))
+  const line = (cells: string[], color: (cell: string, i: number) => string): string =>
+    cells.map((cell, i) => color(cell.padEnd(widths[i] ?? 0), i)).join('').trimEnd()
   return [
-    `${'IDENTITY'.padEnd(11)}${'TIER'.padEnd(14)}${'MAX 5H'.padEnd(9)}${'MAX 7D'.padEnd(9)}${'RESETS'.padEnd(9)}${'API TODAY'.padEnd(11)}TRANSFORMS`,
-    ...ids(config, data).map(row),
+    line(head, (cell) => paint.dim(cell)),
+    ...rows.map((r) => line(r.cells, (cell, i) => i !== 1 ? cell : r.max ? paint.green(cell) : paint.yellow(cell))),
   ]
 }
 
@@ -184,11 +199,11 @@ export default async (argv: string[], ctx: CommandCtx): Promise<void> => {
   if (values.json) return ctx.print(JSON.stringify(data, null, 2))
   if (values.markdown) return markdown(ctx.config, parse(data)).forEach((line) => ctx.print(line))
 
-  table(ctx.config, parse(data)).forEach((line) => ctx.print(line))
+  table(ctx.config, parse(data), pc).forEach((line) => ctx.print(line))
 
   const models = catalog.cached({ statePath: paths.state })
   if (!models) return
   const { missing, fresh } = nudges(ctx.config, models)
-  if (missing.length) ctx.print(`! ${missing.length} configured model${missing.length > 1 ? 's' : ''} missing from the gateway catalog → barrito doctor`)
-  if (fresh.length) ctx.print(`! ${fresh.length} new gateway models match your rules → barrito models sync`)
+  if (missing.length) ctx.print(`${pc.yellow('!')} ${missing.length} configured model${missing.length > 1 ? 's' : ''} missing from the gateway catalog → barrito doctor`)
+  if (fresh.length) ctx.print(`${pc.yellow('!')} ${fresh.length} new gateway models match your rules → barrito models sync`)
 }

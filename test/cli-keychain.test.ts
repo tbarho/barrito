@@ -206,8 +206,8 @@ test('command: prints the intro + one line per item, rewrites the config through
   const cfg = config()
   const saved: Config[] = []
   await keychain(['own'], mkCtx(printed, codes, cfg), { exec, save: (c) => saved.push(c) })
-  assert.match(printed[0] ?? '', /macOS will ask once per key/)
-  assert.equal(printed.filter((l) => l.startsWith('✓ copied ')).length, 4)
+  assert.ok(printed.some((l) => /^│ {2}! .*macOS will ask once per key/.test(l)))
+  assert.equal(printed.filter((l) => l.startsWith('│  ✓ copied ')).length, 4)
   assert.ok(!printed.some((l) => l.includes('gw-work-key') || l.includes('gw-personal-key')))
   assert.equal(saved.length, 1)
   assert.equal(saved[0]?.identities.work?.keychain.gateway, 'barrito: gateway work')
@@ -225,8 +225,8 @@ test('command: trust alias runs own and prints a note (no deprecation hand-wring
   const codes: number[] = []
   const cfg = config()
   await keychain(['trust'], mkCtx(printed, codes, cfg), { exec, save: () => {} })
-  assert.match(printed[0] ?? '', /trust runs own/)
-  assert.equal(printed.filter((l) => l.startsWith('✓ copied ')).length, 4)
+  assert.ok(printed.some((l) => /trust runs own/.test(l)))
+  assert.equal(printed.filter((l) => l.startsWith('│  ✓ copied ')).length, 4)
   assert.equal(cfg.identities.work?.keychain.gateway, 'barrito: gateway work')
 })
 

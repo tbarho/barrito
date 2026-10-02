@@ -1,12 +1,12 @@
 import fs from 'node:fs'
-import { resolve } from 'node:path'
+import { relative, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
-import * as p from '@clack/prompts'
-import pc from 'picocolors'
 import { save } from '../config.ts'
 import { expand, paths } from '../paths.ts'
 import { build, run, runGit, scan, summaries, wire } from '../graft.ts'
 import type { SummaryEnv } from '../graft.ts'
+import { create, loc, prompts, tilde } from '../ui.ts'
+import type { Ui } from '../ui.ts'
 import type { Command, Config, Ctx, GraftRepo, MissingError, ScanEntry } from '../types.ts'
 
 const HELP = `usage: barrito graft [add|rm|build] [path] [--summaries] [--json]
@@ -38,33 +38,34 @@ const envFor = (path: string, { config }: { config: Config }): SummaryEnv | null
   }
 }
 
-const install = async (): Promise<boolean> => {
-  const yes = await p.confirm({ message: 'graft is missing. Install @nanonets/graft globally now?' })
-  if (p.isCancel(yes) || !yes) return false
+const install = async (ui: Ui): Promise<boolean> => {
+  const message = 'graft is missing. Install @nanonets/graft globally now?'
+  const yes = await prompts(ui, 'aborted').confirm(message)
+  ui.answered('install @nanonets/graft?', yes ? 'Yes' : 'No')
+  if (!yes) return false
   run(['npm', 'install', '-g', '@nanonets/graft'])
   return true
 }
 
-const buildStep = (path: string, env: SummaryEnv | null): void => {
+const buildStep = (path: string, env: SummaryEnv | null, ui: Ui): void => {
   const { started } = build(path, { detached: true, env })
-  const name = pc.bold(path)
-  if (started) return p.log.step(`graph build started in the background: ${name}`)
-  p.log.info(`graph build already running or recent: ${name}`)
+  if (started) return ui.item(ui.mark('ok'), `graph build started in the background: ${tilde(path)}`)
+  ui.note(`graph build already running or recent: ${tilde(path)}`)
 }
 
-const wireAndBuild = async (path: string, { config }: { config: Config }): Promise<void> => {
+const wireAndBuild = async (path: string, { config, ui }: { config: Config; ui: Ui }): Promise<void> => {
   const env = envFor(path, { config })
   try {
     wire(path, { env })
   } catch (err) {
     if (!isMissing(err)) throw err
-    if (!(await install())) {
-      p.log.warn(`skipped ${path} — graft not installed`)
+    if (!(await install(ui))) {
+      ui.warn(`skipped ${tilde(path)} — graft not installed`)
       return
     }
     wire(path, { env })
   }
-  buildStep(path, env)
+  buildStep(path, env, ui)
 }
 
 const saveRepos = (config: Config, repos: GraftRepo[]): void => {
@@ -72,33 +73,38 @@ const saveRepos = (config: Config, repos: GraftRepo[]): void => {
   save(config)
 }
 
-const pick = async ({ config, exit }: GraftCtx): Promise<void> => {
-  p.intro('barrito graft')
+const MESSAGE = 'Graft which repos?  (ranked by size)'
+
+const pick = async ({ config, print }: GraftCtx): Promise<void> => {
+  const ui = create({ print })
+  ui.intro('barrito graft')
   const repos = scan({ roots: config.graft.roots, git: runGit, fs, state: paths.state })
   if (!repos.length) {
-    p.outro('no git repos found under graft.roots')
+    ui.outro(`no git repos found under ${config.graft.roots.map(tilde).join(', ') || 'graft.roots'}`)
     return
   }
-  const selected = await p.multiselect({
-    message: 'Graft which repos? (ranked by tracked LOC)',
-    options: repos.map((r: ScanEntry) => ({
-      value: r.path,
-      label: `${r.path} · ${r.partial ? '~' : ''}${r.loc} loc`,
-      hint: r.remote,
-    })),
+  const rel = (repo: string): string =>
+    config.graft.roots.map((r) => relative(r, repo)).find((r) => r && !r.startsWith('..')) ?? tilde(repo)
+  const size = (r: ScanEntry): string => `${r.partial ? '~' : ''}${loc(r.loc)}`
+  const selected = await prompts(ui, 'aborted').multiselect(MESSAGE, {
+    options: repos.map((r: ScanEntry) => ({ value: r.path, label: `${rel(r.path)}  ${size(r)}`, hint: r.remote })),
     initialValues: config.graft.repos.map((r) => r.path),
     required: false,
   })
-  if (p.isCancel(selected)) {
-    p.cancel('aborted')
-    return exit(1)
-  }
+  const picked = new Set(selected)
+  const shown = repos.filter((r, i) => i < 15 || picked.has(r.path))
+  ui.section(MESSAGE)
+  ui.list(shown.map((r) => ({ label: rel(r.path), detail: size(r), on: picked.has(r.path) })))
+  if (repos.length > shown.length) ui.note(`${repos.length - shown.length} more, smaller`)
   const prev = new Map(config.graft.repos.map((r): [string, GraftRepo] => [r.path, r]))
   saveRepos(config, selected.map((path) => prev.get(path) ?? { path, summaries: false }))
   const fresh = selected.filter((path) => !prev.has(path))
-  if (fresh.length) p.log.warn(TRACKED)
-  for (const path of fresh) await wireAndBuild(path, { config })
-  p.outro(`${selected.length} repo(s) in graft.repos`)
+  if (fresh.length) {
+    ui.section('Wiring')
+    ui.warn(TRACKED)
+  }
+  for (const path of fresh) await wireAndBuild(path, { config, ui })
+  ui.outro(`${selected.length} repo${selected.length === 1 ? '' : 's'} in graft.repos`)
 }
 
 const add = async (rest: string[], { config, print, exit }: GraftCtx): Promise<void> => {
@@ -119,9 +125,11 @@ const add = async (rest: string[], { config, print, exit }: GraftCtx): Promise<v
     summaries: values.summaries ?? existing?.summaries ?? false,
   })
   saveRepos(config, repos)
-  p.log.warn(TRACKED)
-  await wireAndBuild(path, { config })
-  print(`${path} grafted (summaries ${values.summaries ? 'on' : 'off'})`)
+  const ui = create({ print })
+  ui.section(`Graft ${ui.g.dot} ${tilde(path)}`)
+  ui.warn(TRACKED)
+  await wireAndBuild(path, { config, ui })
+  ui.outro(`${tilde(path)} grafted (summaries ${values.summaries ? 'on' : 'off'})`)
 }
 
 const rm = async (rest: string[], { config, print, exit }: GraftCtx): Promise<void> => {

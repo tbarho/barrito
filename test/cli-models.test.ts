@@ -177,8 +177,9 @@ test('models sync prints per-dir diffs when dirs diverge', async (t) => {
   const fresh = render(select(fixture, config.models), config).modelPicker.options
   writeFileSync(join(dirs.b, 'settings.json'), JSON.stringify({ modelPicker: { options: fresh } }))
   const { out } = await run(['sync', '--dry-run'], config)
-  assert.match(out, new RegExp(dirs.a))
-  assert.match(out, new RegExp(dirs.b))
+  // one Picker section per diverging dir, home-relative
+  assert.match(out, /^o {2}Picker - ~\/a$/m)
+  assert.match(out, /^o {2}Picker - ~\/b$/m)
   assert.match(out, /= 0 unchanged/)
   assert.match(out, /= [12]\d unchanged/)
 })
@@ -189,7 +190,7 @@ test('models sync isolates an unwritable dir, writes the rest, exits 1', async (
   chmodSync(dirs.b, 0o555)
   const { out, code } = await run(['sync'], cfg(dirs))
   assert.equal(code, 1)
-  assert.ok(out.includes(`✗ ${dirs.b}`))
+  assert.match(out, /^\| {2}x ~\/b {2}/m) // NO_COLOR: ASCII mark, inside the Notes section
   assert.ok(existsSync(join(dirs.a, 'settings.json')))
   assert.ok(existsSync(join(dirs.a, 'agents', 'glm.md')))
 })

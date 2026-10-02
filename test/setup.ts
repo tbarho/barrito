@@ -17,3 +17,7 @@ Object.keys(process.env)
   .forEach((key) => {
     delete process.env[key]
   })
+
+// the spine's glyph set follows the locale and NO_COLOR — pin both so snapshots are stable
+;['LC_ALL', 'LC_CTYPE', 'NO_COLOR', 'FORCE_COLOR'].forEach((key) => { delete process.env[key] })
+process.env.LANG = 'en_US.UTF-8'
