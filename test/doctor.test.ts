@@ -190,6 +190,15 @@ test('a stale (non-barrito) shim fails with the fix', async () => {
   assert.match(hit?.text ?? '', /claude \(not barrito-generated\)/)
 })
 
+test('a harness with no real binary on pathEnv is skipped — no shim expected, no fail', async () => {
+  shims()
+  cacheCatalog()
+  // shims dir on PATH but no realbin dir: nothing is installed, so nothing is a missing shim
+  const results = await diagnose(config(), opts({ pathEnv: `${process.env.BARRITO_SHIMS}:/usr/bin:/bin` }))
+  assert.equal(results.some((r) => r.text.startsWith('shim problems')), false)
+  assert.equal(results.some((r) => r.level === 'fail'), false)
+})
+
 test('legacy launchd service still loaded fails', async () => {
   shims()
   cacheCatalog()

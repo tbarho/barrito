@@ -26,7 +26,7 @@ export const fetchJson = async (url: string, { timeout = 1000, fetch: f = fetch 
 }
 
 // → { status, data? } | null (unreachable); data is the parsed JSON of a 2xx response
-export const postJson = async (url: string, body: unknown, { timeout = 1000, fetch: f = fetch }: { timeout?: number; fetch?: FetchJson } = {}): Promise<{ status: number; data?: unknown } | null> => {
+export const postJson = async (url: string, body: unknown, { timeout = 3000, fetch: f = fetch }: { timeout?: number; fetch?: FetchJson } = {}): Promise<{ status: number; data?: unknown } | null> => {
   const ac = new AbortController()
   const timer = setTimeout(() => ac.abort(), timeout)
   const lose = new Promise<null>((done) => ac.signal.addEventListener('abort', () => done(null)))
