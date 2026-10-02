@@ -16,7 +16,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test 'test/*.test.ts'",
+    "test": "node --import ./test/setup.ts --test 'test/*.test.ts'",
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "e2e": "node test/e2e/run.ts",
     "smoke": "bash scripts/smoke.sh",
