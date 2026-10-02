@@ -56,12 +56,12 @@ const shimsFirst = (pathEnv: string | undefined): DoctorCheck => {
   return { level: 'ok', text: `${paths.shims} first on PATH` }
 }
 
-const shimsPresent = (config: Config | null): DoctorCheck => {
+const shimsPresent = (config: Config | null, pathEnv: string | undefined): DoctorCheck => {
   const names = [...new Set([...Object.keys(builtins), ...Object.keys(config?.harness ?? {})])]
   const bad = names.reduce((memo: string[], name: string) => {
     const h = find(name, config)
     if (!h) return memo
-    if (!realBin(h.bin)) return memo // not installed → no shim expected
+    if (!realBin(h.bin, { path: pathEnv })) return memo // not installed → no shim expected
     const file = path.join(paths.shims, h.bin)
     let why: string | null = null
     if (!fs.existsSync(file)) why = 'missing'
@@ -71,7 +71,7 @@ const shimsPresent = (config: Config | null): DoctorCheck => {
     return memo
   }, [])
   if (bad.length) return { level: 'fail', text: `shim problems: ${bad.join(', ')} — run barrito shim` }
-  const installed = names.filter((name) => { const h = find(name, config); return h && realBin(h.bin) })
+  const installed = names.filter((name) => { const h = find(name, config); return h && realBin(h.bin, { path: pathEnv }) })
   return { level: 'ok', text: `shims present (${installed.join(', ')})` }
 }
 
@@ -204,6 +204,12 @@ const rtkCheck = (config: Config | null, pathEnv: string | undefined): DoctorChe
   return { level: 'warn', text: 'rtk enabled but not on PATH — brew install rtk, then barrito doctor' }
 }
 
+// macOS: only terminal-notifier can put the burrito on a notice (osascript cannot show an image)
+const notifierCheck = (pf: 'darwin' | 'linux', pathEnv: string | undefined): DoctorCheck | null => {
+  if (pf !== 'darwin' || onPath(pathEnv, 'terminal-notifier')) return null
+  return { level: 'warn', text: 'notifications use osascript (no burrito icon) — brew install terminal-notifier' }
+}
+
 const tilde = (p: string): string => p.startsWith(home()) ? `~${p.slice(home().length)}` : p
 
 type Env = Record<string, string | undefined>
@@ -232,7 +238,7 @@ const linuxBits = (config: Config | null, { exec, env, keyring }: { exec: Exec; 
 
 // CI (GITHUB_ACTIONS): no service manager, no hosts, no rc — env vars, health, and env:/file: refs only
 const ciChecks = (config: Config | null, { pathEnv, env }: { pathEnv: string | undefined; env: Env }): DoctorCheck[] => {
-  const out = [shimsFirst(pathEnv), shimsPresent(config)]
+  const out = [shimsFirst(pathEnv), shimsPresent(config, pathEnv)]
   const bPort = env.BARRITO_PORT
   out.push(bPort
     ? { level: 'ok', text: `BARRITO_PORT=${bPort}` }
@@ -293,7 +299,7 @@ export const diagnose = async (
     return out
   }
 
-  const results = [shimsFirst(pathEnv), shimsPresent(config), await router(config, { fetch: f, exec, pf })]
+  const results = [shimsFirst(pathEnv), shimsPresent(config, pathEnv), await router(config, { fetch: f, exec, pf })]
   if (pf === 'darwin') {
     const legacyLine = legacy(exec)
     if (legacyLine) results.push(legacyLine)
@@ -308,6 +314,8 @@ export const diagnose = async (
 
   const rtk = rtkCheck(config, pathEnv)
   if (rtk) results.push(rtk)
+  const notifier = notifierCheck(pf, pathEnv)
+  if (notifier) results.push(notifier)
   results.push(...modelsBits(config, settings.read), ...hosts(exec))
   return results
 }

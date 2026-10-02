@@ -19,12 +19,12 @@ const config: TiersConfig = {
 const dir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'barrito-tiers-'))
 
 const setup = ({ cfg = config, start = 0 }: { cfg?: TiersConfig; start?: number } = {}) => {
-  const notes: { title: string; message: string }[] = []
+  const notes: { title: string; message: string; group?: string }[] = []
   let t = start
   const tiers = create({
     config: cfg,
     statePath: dir(),
-    notify: (title, message) => notes.push({ title, message }),
+    notify: (title, message, group) => notes.push({ title, message, group }),
     now: () => t,
   })
   const tick = (ms: number) => { t += ms }
@@ -357,6 +357,7 @@ test('two consecutive direct failures enter outage and notify once', () => {
   })
   assert.equal(notes.length, 1)
   assert.match(notes[0]?.message ?? '', /^personal — Anthropic unreachable\. Now GLM 5\.3 on API credits\.$/)
+  assert.equal(notes[0]?.group, 'personal')
   tick(30_000)
   assert.equal(tiers.route('personal', 'claude-sonnet-5').to, 'gateway')
 })

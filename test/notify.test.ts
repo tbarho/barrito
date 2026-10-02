@@ -28,8 +28,19 @@ const sink = (): { lines: string[]; out: (l: string) => void } => {
 test('macOS: terminal-notifier fires when it is on PATH', () => {
   const r = notifier()
   notify('barrito', 'personal — Max is back.', { probe: r.probe, exec: r.exec, platform: 'darwin', env: {} })
-  assert.deepEqual(r.calls, [['terminal-notifier', ['-title', 'barrito', '-message', 'personal — Max is back.']]])
+  const [bin, args] = r.calls[0] ?? []
+  assert.equal(bin, 'terminal-notifier')
+  assert.deepEqual(args?.slice(0, 4), ['-title', 'barrito', '-message', 'personal — Max is back.'])
+  assert.ok(args?.[args.indexOf('-contentImage') + 1]?.endsWith('templates/icon.png'))
+  assert.equal(args?.[args.indexOf('-group') + 1], 'barrito') // no group → plain barrito
   assert.deepEqual(r.probes, ['terminal-notifier'])
+})
+
+test('macOS: terminal-notifier groups repeats per identity', () => {
+  const r = notifier()
+  notify('barrito', 'work — Max spent.', { probe: r.probe, exec: r.exec, platform: 'darwin', env: {}, group: 'work' })
+  const args = r.calls[0]?.[1] ?? []
+  assert.equal(args[args.indexOf('-group') + 1], 'barrito-work')
 })
 
 test('macOS: terminal-notifier missing (ENOENT, no throw) falls back to osascript', () => {
@@ -86,16 +97,23 @@ test('GitHub Actions escapes property values: : → %3A, , → %2C', () => {
   assert.deepEqual(lines, ['::warning title=bar%3Arito%2Cextra::m'])
 })
 
-test('linux with a display fires notify-send', () => {
+test('linux with a display fires notify-send with the burrito icon', () => {
   const r = notifier()
   notify('barrito', 'personal — Max spent.', { probe: r.probe, exec: r.exec, env: { DISPLAY: ':0' }, platform: 'linux' })
-  assert.deepEqual(r.calls, [['notify-send', ['barrito', 'personal — Max spent.']]])
+  const [bin, args] = r.calls[0] ?? []
+  assert.equal(bin, 'notify-send')
+  assert.equal(args?.[args.indexOf('-a') + 1], 'barrito')
+  assert.ok(args?.[args.indexOf('-i') + 1]?.endsWith('templates/icon.png'))
+  assert.equal(args?.at(-2), 'barrito')
+  assert.equal(args?.at(-1), 'personal — Max spent.')
 })
 
 test('linux with a wayland display fires notify-send too', () => {
   const r = notifier()
   notify('barrito', 'm', { probe: r.probe, exec: r.exec, env: { WAYLAND_DISPLAY: 'wayland-0' }, platform: 'linux' })
-  assert.deepEqual(r.calls, [['notify-send', ['barrito', 'm']]])
+  const args = r.calls[0]?.[1] ?? []
+  assert.equal(args.at(-1), 'm')
+  assert.ok(args[args.indexOf('-i') + 1]?.endsWith('templates/icon.png'))
 })
 
 test('linux display but no notify-send on PATH falls back to stderr', () => {

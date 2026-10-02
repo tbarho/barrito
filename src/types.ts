@@ -19,7 +19,7 @@ export type Spawn = (cmd: string[], opts?: SpawnOptions & { detached?: boolean; 
 export type Clock = () => number
 export type Fetch = typeof globalThis.fetch
 export type Print = (line: string) => void
-export type Notify = (title: string, message: string) => void
+export type Notify = (title: string, message: string, group?: string) => void
 export type Log = (line: string) => void
 
 export interface Keychain {

@@ -189,7 +189,7 @@ Every command answers `--help` before doing anything. The CLI also answers `--ve
 
 ## Platforms
 
-macOS is the first-class host: Keychain for secrets, a launchd service (`dev.barrito.router`), native notifications (`terminal-notifier` if present, else `osascript`).
+macOS is the first-class host: Keychain for secrets, a launchd service (`dev.barrito.router`), native notifications (`terminal-notifier` if present, else `osascript`; `brew install terminal-notifier` to show the burrito icon).
 
 Linux runs the same router and CLI: `secret-tool` for secrets, a `systemd --user` unit at `~/.config/systemd/user/barrito.service`, `notify-send` when a display exists, XDG paths for config and state. `init` suggests `loginctl enable-linger <user>` so the router survives logout; without a user session bus, barrito points you at `serve --detach` instead of writing a broken unit.
 

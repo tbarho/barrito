@@ -244,9 +244,9 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
       return false
     }
   }
-  const rtkInstalled = (exec: Exec): boolean => {
+  const onPath = (exec: Exec, bin: string): boolean => {
     try {
-      return exec('which', ['rtk']).trim().length > 0
+      return exec('which', [bin]).trim().length > 0
     } catch {
       return false
     }
@@ -254,7 +254,10 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
   const txStep = !hasTransforms(paths.config)
   let tx: TransformState = current.transforms ?? { rtk: true, caveman: 'lite' }
   if (txStep) {
-    if (!rtkInstalled(deps.exec)) p.log.warn('rtk not found on PATH — brew install rtk (github.com/rtk-ai/rtk), then re-run barrito init')
+    if (!onPath(deps.exec, 'rtk')) p.log.warn('rtk not found on PATH — brew install rtk (github.com/rtk-ai/rtk), then re-run barrito init')
+  }
+  if (pf === 'darwin' && !onPath(deps.exec, 'terminal-notifier')) {
+    p.log.info('notifications will show no burrito icon — brew install terminal-notifier')
   }
   if (txStep && !yes) {
     p.log.step('Token savers')

@@ -136,9 +136,9 @@ export const create = ({
     } catch {}
   }
 
-  const say = (message: string): void => {
+  const say = (id: string, message: string): void => {
     if (!notify) return
-    try { notify('barrito', message) } catch {}
+    try { notify('barrito', message, id) } catch {}
   }
 
   const st = (id: string): State => (states[id] ??= blank())
@@ -154,7 +154,7 @@ export const create = ({
     s.blipRetry = false
     s.outageRetry = false
     save()
-    say(`${id} — Max is back.`)
+    say(id, `${id} — Max is back.`)
   }
 
   const blipDelay = (h: Headers): number => {
@@ -190,7 +190,7 @@ export const create = ({
     s.outageRetry = false
     if (!was) s.since = now() // since marks entering a state, not repeats
     save()
-    if (!was) say(hard
+    if (!was) say(id, hard
       ? `${id} — Max spent. Now ${label(config, head)} on API credits until ${hhmm(resetAt)}.`
       : `${id} — Anthropic throttling. ${label(config, head)} on API credits for a few minutes.`)
     return { retry: { to: 'gateway', model: head, reason: hard ? 'quota' : 'throttle' } }
@@ -231,7 +231,7 @@ export const create = ({
     s.blipRetry = false
     s.outageRetry = false
     save()
-    say(`${id} — Anthropic unreachable. Now ${label(config, head)} on API credits.`)
+    say(id, `${id} — Anthropic unreachable. Now ${label(config, head)} on API credits.`)
     return { retry: { to: 'gateway', model: head, reason: 'outage' } }
   }
 

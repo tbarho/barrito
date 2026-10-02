@@ -1,4 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process'
+import path from 'node:path'
+import { root } from '../paths.ts'
 
 const onPath = new Map<string, boolean>()
 
@@ -42,12 +44,27 @@ export interface NotifyOpts {
   exec?: (bin: string, args: string[]) => unknown
   env?: Record<string, string | undefined>
   platform?: NodeJS.Platform
+  // the identity (or kind) the notice belongs to — macOS groups repeats so they replace, not stack
+  group?: string
   out?: (t: string) => void
   err?: (t: string) => void
 }
 
-const mac = (title: string, message: string, probe: (bin: string) => boolean, exec: (bin: string, args: string[]) => unknown): void => {
-  if (probe('terminal-notifier')) return void exec('terminal-notifier', ['-title', title, '-message', message])
+const icon = (): string => path.join(root(), 'templates', 'icon.png')
+
+const mac = (
+  title: string,
+  message: string,
+  group: string | undefined,
+  probe: (bin: string) => boolean,
+  exec: (bin: string, args: string[]) => unknown,
+): void => {
+  if (probe('terminal-notifier')) {
+    // contentImage shows the burrito on the right; -appIcon is unreliable on modern macOS
+    return void exec('terminal-notifier', [
+      '-title', title, '-message', message, '-contentImage', icon(), '-group', group ? `barrito-${group}` : 'barrito',
+    ])
+  }
   exec('osascript', ['-e', `display notification "${esc(message)}" with title "${esc(title)}"`])
 }
 
@@ -55,7 +72,7 @@ const mac = (title: string, message: string, probe: (bin: string) => boolean, ex
 export const notify = (
   title: string,
   message: string,
-  { probe = which, exec = fire, env = process.env, platform = process.platform, out = line(process.stdout), err = line(process.stderr) }: NotifyOpts = {},
+  { probe = which, exec = fire, env = process.env, platform = process.platform, group, out = line(process.stdout), err = line(process.stderr) }: NotifyOpts = {},
 ): void => {
   try {
     if (env.GITHUB_ACTIONS === 'true') {
@@ -63,9 +80,9 @@ export const notify = (
       return
     }
     if (platform === 'linux' && (env.DISPLAY || env.WAYLAND_DISPLAY)) {
-      if (probe('notify-send')) return void exec('notify-send', [title, message])
+      if (probe('notify-send')) return void exec('notify-send', ['-a', 'barrito', '-i', icon(), title, message])
     }
-    if (platform === 'darwin') return mac(title, message, probe, exec)
+    if (platform === 'darwin') return mac(title, message, group, probe, exec)
     err(`barrito: ${message}`)
   } catch {}
 }

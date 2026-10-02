@@ -252,7 +252,8 @@ export default async (argv: string[], ctx: CommandCtx, opts: ServeOpts = {}): Pr
 
   const statePath = opts.statePath ?? paths.state
   const log = createLog({ file: paths.logs })
-  const t = tiers.create({ config, statePath, notify })
+  // tiers speaks (title, message, group); the desktop notifier takes its opts object
+  const t = tiers.create({ config, statePath, notify: (title, message, group) => notify(title, message, { group }) })
   const s = spend.create({
     prices: (id: string) => catalog.price(catalog.cached({ statePath }) || [], id),
     statePath,
