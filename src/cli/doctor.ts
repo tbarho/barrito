@@ -11,7 +11,7 @@ import { unit } from '../service/systemd.ts'
 import * as keychain from '../keychain/index.ts'
 import { available as linuxKeyring } from '../keychain/linux.ts'
 import * as catalog from '../catalog.ts'
-import { builtins, find } from '../harnesses.ts'
+import { builtins, find, realBin } from '../harnesses.ts'
 import { read as readSettings } from '../settings.ts'
 import { rcOf } from '../detect.ts'
 import { base, fetchJson, nudges, parse as parseStatus, port } from './status.ts'
@@ -61,6 +61,7 @@ const shimsPresent = (config: Config | null): DoctorCheck => {
   const bad = names.reduce((memo: string[], name: string) => {
     const h = find(name, config)
     if (!h) return memo
+    if (!realBin(h.bin)) return memo // not installed → no shim expected
     const file = path.join(paths.shims, h.bin)
     let why: string | null = null
     if (!fs.existsSync(file)) why = 'missing'
@@ -70,7 +71,8 @@ const shimsPresent = (config: Config | null): DoctorCheck => {
     return memo
   }, [])
   if (bad.length) return { level: 'fail', text: `shim problems: ${bad.join(', ')} — run barrito shim` }
-  return { level: 'ok', text: `shims present (${names.join(', ')})` }
+  const installed = names.filter((name) => { const h = find(name, config); return h && realBin(h.bin) })
+  return { level: 'ok', text: `shims present (${installed.join(', ')})` }
 }
 
 const router = async (config: Config | null, { fetch: f, exec, pf }: { fetch?: FetchJson; exec: Exec; pf: 'darwin' | 'linux' }): Promise<DoctorCheck> => {
