@@ -1,3 +1,5 @@
+import { solar } from './solar.js';
+
 export async function flare(canvas, motion, stats, fallback) {
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'low-power' });
   if (!adapter) throw new Error('No WebGPU adapter');
@@ -40,6 +42,7 @@ export async function flare(canvas, motion, stats, fallback) {
       })
     ])));
     const buffers = Array.from({ length: 5 }, () => device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }));
+    const system = await solar(device, image, sampler, hero, logo, format);
     const query = timing ? device.createQuerySet({ type: 'timestamp', count: 2 }) : null;
     const resolve = timing ? device.createBuffer({ size: 16, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC }) : null;
     const readback = timing ? device.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ }) : null;
@@ -82,7 +85,7 @@ export async function flare(canvas, motion, stats, fallback) {
       if (!force && size[0] === rect.width && size[1] === rect.height) return;
       size = [rect.width, rect.height];
       const dpr = Math.min(devicePixelRatio || 1, 1.5);
-      const scale = Math.min(dpr, Math.sqrt((low ? 220000 : 420000) / (size[0] * size[1])));
+      const scale = Math.min(dpr, Math.sqrt((low ? 170000 : 360000) / (size[0] * size[1])));
       canvas.width = Math.max(1, Math.round(size[0] * scale));
       canvas.height = Math.max(1, Math.round(size[1] * scale));
       stats.width = canvas.width;
@@ -91,6 +94,7 @@ export async function flare(canvas, motion, stats, fallback) {
       const wrap = hero.querySelector('.wrap');
       anchor = [(wrap.offsetLeft + l.offsetLeft + l.offsetWidth / 2) / size[0], (wrap.offsetTop + l.offsetTop + l.offsetHeight / 2) / size[1], l.offsetWidth / size[0], l.offsetHeight / size[1]];
       heading = hero.querySelector('h1').getBoundingClientRect().top - rect.top;
+      system.resize();
       textures.forEach(t => t.destroy());
       const w = Math.max(1, Math.round(canvas.width * (low ? 0.42 : 0.55)));
       const h = Math.max(1, Math.round(canvas.height * (low ? 0.42 : 0.55)));
@@ -120,9 +124,7 @@ export async function flare(canvas, motion, stats, fallback) {
           i === 1 ? 1.5 : 0, i === 2 ? 1.5 : 0, low ? 16 : 32, 0
         ]);
         device.queue.writeBuffer(buffers[i], 0, data);
-        const timestampWrites = measure && (i === 0 || i === 4) ? {
-          querySet: query, ...(i === 0 ? { beginningOfPassWriteIndex: 0 } : { endOfPassWriteIndex: 1 })
-        } : undefined;
+        const timestampWrites = measure && i === 0 ? { querySet: query, beginningOfPassWriteIndex: 0 } : undefined;
         const output = pass.output || context.getCurrentTexture();
         const render = encoder.beginRenderPass({ colorAttachments: [{
           view: output.createView(), loadOp: 'clear', storeOp: 'store',
@@ -134,11 +136,15 @@ export async function flare(canvas, motion, stats, fallback) {
         render.draw(3);
         render.end();
       });
+      system.draw(encoder, time, pointer, measure ? { querySet: query, endOfPassWriteIndex: 1 } : undefined);
       if (measure) {
         encoder.resolveQuerySet(query, 0, 2, resolve, 0);
         encoder.copyBufferToBuffer(resolve, 0, readback, 0, 16);
       }
       device.queue.submit([encoder.finish()]);
+      if (!hero.hasAttribute('data-solar')) device.queue.onSubmittedWorkDone().then(() => {
+        if (!dead) hero.dataset.solar = '';
+      }).catch(() => {});
       if (measure) {
         const warm = stats.frames > 12;
         pending = true;
@@ -242,6 +248,7 @@ export async function flare(canvas, motion, stats, fallback) {
       observer.disconnect();
       resizeObserver.disconnect();
       delete hero.dataset.gpu;
+      system.dispose();
       delete canvas.dataset.ready;
       textures.forEach(t => t.destroy());
       buffers.forEach(b => b.destroy());
