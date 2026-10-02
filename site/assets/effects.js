@@ -1,310 +1,256 @@
-/* barrito canvas fx — dithered pixel field, fade, button dust, border glow. no deps. */
-(function () {
-var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-var BAYER = [0,32,8,40,2,34,10,42,48,16,56,24,50,18,58,26,12,44,4,36,14,46,6,38,60,28,52,20,62,30,54,22,3,35,11,43,1,33,9,41,51,19,59,27,49,17,57,25,15,47,7,39,13,45,5,37,63,31,55,23,61,29,53,21];
+const motion = matchMedia('(prefers-reduced-motion: reduce)');
+const canvas = document.querySelector('.fx-foil');
+const hero = canvas?.closest('.hero');
+const stats = { mode: 'fallback', frames: 0, running: false, cpu: [], gpu: [] };
+window.__fx = { hero: stats };
 
-function rng(seed) {
-  return function () {
-    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
-    var t = Math.imul(seed ^ seed >>> 15, 1 | seed);
-    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+const install = document.querySelector('.install');
+install?.addEventListener('pointermove', (event) => {
+  if (motion.matches || event.pointerType === 'touch') return;
+  const rect = install.getBoundingClientRect();
+  install.style.setProperty('--mx', `${event.clientX - rect.left}px`);
+  install.style.setProperty('--my', `${event.clientY - rect.top}px`);
+}, { passive: true });
+
+const vertex = `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`;
+
+// Bake folded, triangular noise once; the live material only samples the normal map.
+const crinkle = `
+  varying vec2 vUv;
+  float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+  }
+  vec3 fold(vec2 p) {
+    vec2 skew = vec2(p.x + p.y * 0.57735, p.y * 1.1547);
+    vec2 cell = floor(skew), f = fract(skew);
+    float a = hash(cell), b = hash(cell + vec2(1.0, 0.0));
+    float c = hash(cell + vec2(0.0, 1.0)), d = hash(cell + 1.0);
+    float lo = a + (b - a) * f.x + (c - a) * f.y;
+    float hi = d + (c - d) * (1.0 - f.x) + (b - d) * (1.0 - f.y);
+    float upper = step(1.0, f.x + f.y);
+    float h = mix(lo, hi, upper) - 0.48;
+    vec2 slope = mix(vec2(b - a, c - a), vec2(d - c, d - b), upper);
+    slope = vec2(slope.x, slope.x * 0.57735 + slope.y * 1.1547);
+    return vec3(slope * smoothstep(-0.015, 0.015, h) * 2.0 - slope, abs(h));
+  }
+  void main() {
+    vec2 p = vUv * 14.0 + vec2(sin(vUv.y * 18.0), sin(vUv.x * 19.0)) * 0.35;
+    mat2 turn = mat2(0.8, -0.6, 0.6, 0.8);
+    vec3 broad = fold(p);
+    vec3 medium = fold(turn * p * 2.13 + 5.7);
+    vec3 fine = fold(p * 4.37 + 13.2);
+    vec2 slope = broad.xy * 0.85 + transpose(turn) * medium.xy * 0.45 + fine.xy * 0.12;
+    float h = broad.z * 0.6 + medium.z * 0.18 + fine.z * 0.03;
+    vec3 normal = normalize(vec3(-slope * 2.6, 1.0));
+    gl_FragColor = vec4(normal * 0.5 + 0.5, h);
+  }
+`;
+
+const foil = `
+  varying vec2 vUv;
+  uniform sampler2D uFoil;
+  uniform float uAspect;
+  uniform float uTime;
+  uniform vec2 uPointer;
+  void main() {
+    vec2 uv = vUv;
+    vec2 p = vec2((uv.x - 0.5) * uAspect, uv.y);
+    float side = abs(uv.x * 2.0 - 1.0);
+    float edge = 0.16 + 0.48 * pow(side, 1.7) + (uv.x - 0.5) * 0.06;
+    vec2 wrap = vec2(p.x * 0.9 + uv.y * 0.12, uv.y * 0.82);
+    wrap += vec2(sin(uv.y * 4.0) * 0.035, sin(p.x * 3.0) * 0.025);
+    wrap += uPointer * 0.006;
+    vec4 foil = texture2D(uFoil, wrap + vec2(0.5, 0.13));
+    edge += (foil.a - 0.22) * 0.085;
+    float sheet = 1.0 - smoothstep(edge - 0.004, edge + 0.004, uv.y);
+    vec3 n = normalize((foil.rgb * 2.0 - 1.0) + vec3(p.x * 0.3, 0.2, 0.2));
+    float drift = sin(uTime * 0.18) * 0.12;
+    vec3 silver = normalize(vec3(0.65 + uPointer.x * 0.18, 0.6 + drift, 0.85));
+    vec3 ember = normalize(vec3(-0.8 + uPointer.x * 0.16, 0.25 + uPointer.y * 0.16, 0.7));
+    float s = max(0.0, dot(n, silver));
+    float e = max(0.0, dot(n, ember));
+    float rim = exp(-abs(uv.y - edge + 0.005) * 160.0);
+    vec3 metal = vec3(0.026, 0.027, 0.025);
+    metal += vec3(0.58, 0.59, 0.56) * (pow(s, 20.0) * 0.36 + pow(s, 3.0) * 0.08);
+    metal += vec3(1.0, 0.36, 0.055) * (pow(e, 18.0) * 0.22 + pow(e, 4.0) * 0.04) * (1.0 - uv.x * 0.75);
+    metal += vec3(0.20, 0.18, 0.14) * rim * (0.35 + s * 0.65);
+    vec3 bg = vec3(19.0, 18.0, 16.0) / 255.0;
+    float bottom = smoothstep(0.0, 0.14, uv.y);
+    float top = 1.0 - smoothstep(0.42, 0.9, uv.y);
+    float quiet = 1.0 - 0.78 * exp(-pow((uv.x - 0.5) * 4.2, 2.0));
+    vec3 color = bg + metal * sheet * bottom * top * quiet * 0.75;
+    float glow = exp(-length(vec2((uv.x - 0.08) * 1.5, (uv.y - 0.4) * 2.4)) * 5.0);
+    color += vec3(0.017, 0.006, 0.001) * glow;
+    gl_FragColor = vec4(color, 1.0);
+  }
+`;
+
+async function start() {
+  if (!canvas || !hero) return;
+  const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, powerPreference: 'low-power' });
+  if (!gl) return;
+  // One bundled, pinned external module; no transitive CDN scripts.
+  const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.186.1/+esm');
+  const renderer = new THREE.WebGLRenderer({ canvas, context: gl, antialias: false, alpha: false });
+  const camera = new THREE.Camera();
+  const scene = new THREE.Scene();
+  const geometry = new THREE.PlaneGeometry(2, 2);
+  const bake = new THREE.ShaderMaterial({ vertexShader: vertex, fragmentShader: crinkle });
+  const mesh = new THREE.Mesh(geometry, bake);
+  scene.add(mesh);
+  const texture = new THREE.WebGLRenderTarget(1024, 1024, {
+    depthBuffer: false, stencilBuffer: false,
+    wrapS: THREE.MirroredRepeatWrapping, wrapT: THREE.MirroredRepeatWrapping
+  });
+  renderer.setRenderTarget(texture);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+  const pointer = new THREE.Vector2();
+  const target = new THREE.Vector2();
+  const uniforms = {
+    uFoil: { value: texture.texture }, uAspect: { value: 1 },
+    uTime: { value: 0 }, uPointer: { value: pointer }
   };
-}
+  const material = new THREE.ShaderMaterial({ vertexShader: vertex, fragmentShader: foil, uniforms });
+  mesh.material = material;
 
-function mixc(a, b, t) {
-  return [Math.round(a[0] + (b[0] - a[0]) * t), Math.round(a[1] + (b[1] - a[1]) * t), Math.round(a[2] + (b[2] - a[2]) * t)];
-}
-
-/* 1 + 5. dithered pixel field: procedural scene, ordered-dither lit cells as particles */
-function field(canvas, o) {
-  var ctx = canvas.getContext('2d');
-  var dpr = Math.min(devicePixelRatio || 1, 2);
-  var W = 0, H = 0, buckets = [], drops = [], raf = 0, last = 0, seen = false;
-  var px = -1e4, py = -1e4, acc = 0;
-  var perf = { frames: 0, ms: 0, max: 0 };
-
-  function size() {
-    W = canvas.clientWidth; H = canvas.clientHeight;
-    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.imageSmoothingEnabled = false;
-  }
-
-  function color(b, star, r) {
-    var c, a;
-    if (star) {
-      c = r() < o.silver ? [186, 181, 168] : [242, 232, 213];
-      a = 0.3 + r() * 0.55;
-    } else {
-      var t = Math.min(1, b / 0.8);
-      c = mixc([90, 42, 6], [255, 150, 40], t * t);
-      a = 0.3 + 0.6 * t;
-    }
-    c[0] &= 0xF0; c[1] &= 0xF0; c[2] &= 0xF0;
-    return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + (Math.round(a * 8) / 8) + ')';
-  }
-
-  function build() {
-    var r = rng(o.seed), cols = Math.ceil(W / 2), rows = Math.ceil(H / 2), cx = cols / 2;
-    var stars = {}, lit = [], i, x, y;
-    for (i = 0; i < Math.round(cols * rows * o.stars); i++)
-      stars[((r() * rows * 0.75) | 0) * cols + ((r() * cols) | 0)] = 0.3 + r() * 0.5;
-    var colE = [], rowE = [];
-    for (x = 0; x < cols; x++) { var gx = (x - cx) / (cols * 0.44); colE[x] = Math.exp(-gx * gx * 2.4); }
-    for (y = 0; y < rows; y++) { var gy = (y / rows - 0.84) / 0.34; rowE[y] = 0.8 * Math.exp(-gy * gy * 2.4) + 0.16 * Math.max(0, y / rows - 0.6); }
-    for (y = 0; y < rows; y++) {
-      for (x = 0; x < cols; x++) {
-        var s = stars[y * cols + x];
-        var b = s || colE[x] * rowE[y];
-        if (b * o.gate > (BAYER[(x & 7) + ((y & 7) << 3)] + 0.5) / 64) lit.push([x, y, b, s > 0]);
-      }
-    }
-    var keep = Math.min(1, o.cap / lit.length), by = {};
-    for (i = 0; i < lit.length; i++) {
-      if (r() > keep) continue;
-      var p = lit[i];
-      var css = color(p[2], p[3], r);
-      (by[css] || (by[css] = { css: css, pts: [] })).pts.push({ x: p[0] * 2, y: p[1] * 2, hx: p[0] * 2, hy: p[1] * 2, vx: 0, vy: 0 });
-    }
-    buckets = Object.keys(by).map(function (k) { return by[k]; });
-  }
-
-  function step(dt) {
-    var lx = -1e4, ly = 0;
-    if (px > -9999) {
-      var rc = canvas.getBoundingClientRect();
-      lx = px - rc.left; ly = py - rc.top;
-      if (lx < -110 || ly < -110 || lx > W + 110 || ly > H + 110) lx = -1e4;
-    }
-    var damp = 1 - 5 * dt;
-    for (var bi = 0; bi < buckets.length; bi++) {
-      var pts = buckets[bi].pts;
-      for (var i = 0; i < pts.length; i++) {
-        var p = pts[i];
-        if (lx > -9999) {
-          var dx = p.x - lx, dy = p.y - ly, d2 = dx * dx + dy * dy;
-          if (d2 < 12100 && d2 > 0.01) {
-            var d = Math.sqrt(d2), f = (1 - d / 110) * 2400 / d;
-            p.vx += dx * f * dt; p.vy += dy * f * dt;
-          }
-        }
-        p.vx += (p.hx - p.x) * 28 * dt;
-        p.vy += (p.hy - p.y) * 28 * dt;
-        p.vx *= damp; p.vy *= damp;
-        p.x += p.vx * dt; p.y += p.vy * dt;
-      }
-    }
-    if (o.rate) {
-      acc += o.rate * dt;
-      while (acc >= 1) { acc--; drops.push({ x: Math.random() * W, y: -4, vx: (Math.random() - 0.5) * 16, vy: 60 + Math.random() * 60, a: 0.9, st: 0, tx: 0, c: '' }); }
-    }
-    for (var j = drops.length - 1; j >= 0; j--) {
-      var q = drops[j];
-      if (!q.st) {
-        q.x += q.vx * dt; q.y += q.vy * dt;
-        if (q.y > H * 0.64) {
-          q.st = 1;
-          var side = q.x < W / 2 ? -1 : 1;
-          q.tx = W / 2 + side * W * 0.18;
-          q.c = side < 0 ? 'rgba(255,128,1,' : 'rgba(186,181,168,';
-        }
-      } else {
-        q.vx += (q.tx - q.x) * 2.5 * dt;
-        q.x += q.vx * dt; q.y += q.vy * dt;
-        q.a -= 1.5 * dt;
-      }
-      if (q.a <= 0 || q.y > H) drops.splice(j, 1);
-    }
-    if (drops.length > 48) drops.splice(0, drops.length - 48);
-  }
+  const measuring = new URLSearchParams(location.search).has('fxperf');
+  const timer = measuring && gl.getExtension('EXT_disjoint_timer_query_webgl2');
+  let query = null;
+  let raf = 0;
+  let seen = false;
+  let lost = false;
+  let dirty = true;
+  let last = 0;
+  let next = 0;
+  let width = 0;
+  let height = 0;
+  const sample = (list, value) => {
+    list.push(value);
+    if (list.length > 180) list.shift();
+  };
 
   function draw() {
-    ctx.clearRect(0, 0, W, H);
-    for (var bi = 0; bi < buckets.length; bi++) {
-      var b = buckets[bi], pts = b.pts;
-      ctx.fillStyle = b.css;
-      for (var i = 0; i < pts.length; i++) ctx.fillRect(pts[i].x | 0, pts[i].y | 0, 2, 2);
+    const start = performance.now();
+    if (query && gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE)) {
+      if (!gl.getParameter(timer.GPU_DISJOINT_EXT)) sample(stats.gpu, gl.getQueryParameter(query, gl.QUERY_RESULT) / 1e6);
+      gl.deleteQuery(query);
+      query = null;
     }
-    for (var j = 0; j < drops.length; j++) {
-      var q = drops[j];
-      ctx.fillStyle = (q.st ? q.c : 'rgba(242,232,213,') + q.a.toFixed(2) + ')';
-      ctx.fillRect(q.x | 0, q.y | 0, 2, 2);
+    const measure = timer && !query;
+    if (measure) {
+      query = gl.createQuery();
+      gl.beginQuery(timer.TIME_ELAPSED_EXT, query);
     }
+    renderer.render(scene, camera);
+    if (measure) gl.endQuery(timer.TIME_ELAPSED_EXT);
+    if (measuring) sample(stats.cpu, performance.now() - start);
+    stats.frames++;
+    dirty = false;
+    canvas.dataset.ready = '';
   }
 
-  function blast(cx, cy) {
-    buckets.forEach(function (b) {
-      b.pts.forEach(function (p) {
-        var dx = p.x - cx, dy = p.y - cy, d = Math.sqrt(dx * dx + dy * dy);
-        if (d > 160 || d < 0.01) return;
-        var f = (1 - d / 160) * 560 / d;
-        p.vx += dx * f; p.vy += dy * f;
-      });
-    });
-  }
-
-  function tick(t) {
+  function tick(now) {
     raf = 0;
-    var dt = Math.min((t - last) / 1000 || 0.016, 1 / 30);
-    last = t;
-    var t0 = performance.now();
-    step(dt); draw();
-    var ms = performance.now() - t0;
-    perf.frames++;
-    perf.ms = perf.ms ? perf.ms * 0.9 + ms * 0.1 : ms;
-    if (ms > perf.max) perf.max = ms;
-    if (seen && !document.hidden) raf = requestAnimationFrame(tick);
+    if (!seen || document.hidden || lost) return;
+    if (motion.matches) {
+      stats.mode = 'static';
+      pointer.set(0, 0);
+      uniforms.uTime.value = 0;
+      draw();
+      stats.running = false;
+      return;
+    }
+    if (now >= next || dirty) {
+      const dt = last ? Math.min((now - last) / 1000, 0.1) : 0;
+      next = Math.max(next + 1000 / 30, now);
+      last = now;
+      uniforms.uTime.value += dt;
+      pointer.lerp(target, 1 - Math.exp(-dt * 3));
+      draw();
+    }
+    if (!motion.matches) raf = requestAnimationFrame(tick);
+    stats.running = !!raf;
   }
 
-  function wake() {
-    if (raf || reduced || !seen || document.hidden) return;
-    last = performance.now();
+  function sync() {
+    cancelAnimationFrame(raf);
+    raf = 0;
+    last = 0;
+    next = 0;
+    stats.running = false;
+    stats.mode = lost ? 'fallback' : motion.matches ? 'static' : 'animated';
+    if (!seen || document.hidden || lost) return;
+    if (motion.matches) {
+      if (dirty) draw();
+      return;
+    }
     raf = requestAnimationFrame(tick);
+    stats.running = true;
   }
 
-  var rq = 0;
-  function rebuild() {
-    size(); build();
-    if (reduced) draw();
-  }
-  if ('ResizeObserver' in window) new ResizeObserver(function () {
-    if (rq) return;
-    rq = requestAnimationFrame(function () { rq = 0; rebuild(); });
-  }).observe(canvas);
-  rebuild();
-
-  if (reduced) return perf;
-
-  if ('IntersectionObserver' in window) {
-    new IntersectionObserver(function (es) { seen = es[0].isIntersecting; wake(); }, { rootMargin: '40px' }).observe(canvas);
-  } else { seen = true; }
-
-  addEventListener('pointermove', function (e) { px = e.clientX; py = e.clientY; wake(); }, { passive: true });
-  addEventListener('pointerdown', function (e) {
-    var rc = canvas.getBoundingClientRect();
-    var x = e.clientX - rc.left, y = e.clientY - rc.top;
-    if (x < -20 || y < -20 || x > W + 20 || y > H + 20) return;
-    blast(x, y);
-  }, { passive: true });
-  document.addEventListener('visibilitychange', wake);
-  return perf;
-}
-
-/* 2. dithered fade overlay — per-pixel alpha noise over a bg gradient */
-function fadeOverlay(canvas) {
-  var ctx = canvas.getContext('2d');
-  var dpr = Math.min(devicePixelRatio || 1, 2);
-  function render() {
-    var W = canvas.clientWidth, H = canvas.clientHeight;
-    if (!W || !H) return;
-    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
-    var band = Math.min(260, Math.round(H * 0.45));
-    var off = document.createElement('canvas');
-    off.width = W; off.height = band;
-    var octx = off.getContext('2d');
-    var img = octx.createImageData(W, band), d = img.data, r = rng(7);
-    for (var y = 0; y < band; y++) {
-      var a = Math.pow(y / band, 1.35) * 255;
-      for (var x = 0; x < W; x++) {
-        var i = (y * W + x) * 4;
-        d[i] = 19; d[i + 1] = 18; d[i + 2] = 16;
-        d[i + 3] = Math.max(0, Math.min(255, a + ((r() * 8) | 0) - 4));
-      }
-    }
-    octx.putImageData(img, 0, 0);
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(off, 0, (H - band) * dpr, W * dpr, band * dpr);
-    canvas.dataset.rendered = '1';
-  }
-  if ('ResizeObserver' in window) new ResizeObserver(render).observe(canvas);
-  render();
-}
-
-/* 3. button dust — crumbs on click, rAF only while alive */
-var DUST = ['#f2e8d5', '#e6d2ab', '#d8b98a', '#c8a25c'];
-function dust(btn) {
-  if (reduced) return;
-  var c = document.createElement('canvas');
-  c.className = 'fx-dust';
-  c.setAttribute('aria-hidden', 'true');
-  btn.appendChild(c);
-  btn.style.position = 'relative';
-  btn.style.zIndex = '0';
-  var ctx = c.getContext('2d');
-  var dpr = Math.min(devicePixelRatio || 1, 2), W = 0, H = 0, pts = [], raf = 0, last = 0;
-
-  function size() {
-    var rc = btn.getBoundingClientRect();
-    W = Math.round(rc.width) + 52; H = Math.round(rc.height) + 52;
-    c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  function resize() {
+    const rect = hero.getBoundingClientRect();
+    if (width === rect.width && height === rect.height) return;
+    width = rect.width;
+    height = rect.height;
+    const dpr = Math.min(devicePixelRatio || 1, 1.5);
+    const scale = Math.min(dpr * 0.8, 1000 / width, Math.sqrt(460000 / (width * height)));
+    renderer.setPixelRatio(scale);
+    renderer.setSize(width, height, false);
+    uniforms.uAspect.value = width / height;
+    stats.width = canvas.width;
+    stats.height = canvas.height;
+    dirty = true;
+    sync();
   }
 
-  function tick(t) {
-    raf = 0;
-    var dt = Math.min((t - last) / 1000 || 0.016, 1 / 30);
-    last = t;
-    var damp = 1 - 5 * dt;
-    ctx.clearRect(0, 0, W, H);
-    for (var i = pts.length - 1; i >= 0; i--) {
-      var p = pts[i];
-      p.l -= dt;
-      if (p.l <= 0) { pts.splice(i, 1); continue; }
-      p.vy += 300 * dt;
-      p.vx *= damp; p.vy *= damp;
-      p.x += p.vx * dt; p.y += p.vy * dt;
-      var a = p.l / p.m;
-      ctx.globalAlpha = a * a;
-      ctx.fillStyle = p.c;
-      ctx.fillRect(p.x | 0, p.y | 0, p.s, p.s);
-    }
-    ctx.globalAlpha = 1;
-    if (pts.length) raf = requestAnimationFrame(tick);
-  }
-
-  btn.addEventListener('click', function (e) {
-    var rc = btn.getBoundingClientRect();
-    var real = e && e.detail;
-    var cx = (real ? e.clientX - rc.left : rc.width / 2) + 26;
-    var cy = (real ? e.clientY - rc.top : rc.height / 2) + 26;
-    for (var i = 0, n = 24 + Math.random() * 14; i < n; i++) {
-      var a = Math.random() * Math.PI * 2, s = 50 + Math.random() * 170, m = 0.45 + Math.random() * 0.45;
-      pts.push({ x: cx, y: cy, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 40, l: m, m: m, s: 2 + Math.random() * 2, c: DUST[Math.random() * 4 | 0] });
-    }
-    if (!raf) { last = performance.now(); raf = requestAnimationFrame(tick); }
+  new ResizeObserver(resize).observe(hero);
+  new IntersectionObserver(([entry]) => {
+    seen = entry.isIntersecting;
+    sync();
+  }).observe(hero);
+  document.addEventListener('visibilitychange', sync);
+  motion.addEventListener('change', () => {
+    pointer.set(0, 0);
+    target.set(0, 0);
+    uniforms.uTime.value = 0;
+    dirty = true;
+    sync();
   });
-
-  if ('ResizeObserver' in window) new ResizeObserver(size).observe(btn);
-  size();
-}
-
-/* 4. pointer-tracking border glow via --mx/--my */
-function glow(el) {
-  if (!el || !matchMedia('(hover: hover)').matches) return;
-  el.addEventListener('pointermove', function (e) {
-    var rc = el.getBoundingClientRect();
-    el.style.setProperty('--mx', (e.clientX - rc.left) + 'px');
-    el.style.setProperty('--my', (e.clientY - rc.top) + 'px');
+  hero.addEventListener('pointermove', (event) => {
+    if (motion.matches || event.pointerType === 'touch') return;
+    const rect = hero.getBoundingClientRect();
+    target.set((event.clientX - rect.left) / rect.width * 2 - 1, 1 - (event.clientY - rect.top) / rect.height * 2);
   }, { passive: true });
+  hero.addEventListener('pointerleave', () => target.set(0, 0));
+  canvas.addEventListener('webglcontextlost', (event) => {
+    event.preventDefault();
+    lost = true;
+    query = null;
+    delete canvas.dataset.ready;
+    sync();
+  });
+  canvas.addEventListener('webglcontextrestored', () => {
+    renderer.setRenderTarget(texture);
+    mesh.material = bake;
+    renderer.render(scene, camera);
+    renderer.setRenderTarget(null);
+    mesh.material = material;
+    lost = false;
+    dirty = true;
+    sync();
+  });
+  resize();
 }
 
-function init() {
-  var stats = {};
-  var hero = document.querySelector('[data-fx="hero"]');
-  if (hero) stats.hero = field(hero, { seed: 11, cap: 4200, stars: 0.0016, silver: 0.3, gate: 1.05, rate: 2.4 });
-  var foot = document.querySelector('[data-fx="footer"]');
-  if (foot && matchMedia('(min-width: 700px)').matches)
-    stats.footer = field(foot, { seed: 77, cap: 1200, stars: 0.0022, silver: 0.6, gate: 1.15, rate: 0 });
-  var f = document.querySelector('.fx-fade');
-  if (f) fadeOverlay(f);
-  document.querySelectorAll('.copy, .btn.primary').forEach(dust);
-  glow(document.querySelector('.install'));
-  try { window.__fx = stats; } catch (e) {}
-}
-
-if (document.readyState === 'loading') addEventListener('DOMContentLoaded', init);
-else init();
-})();
+start().catch(() => {
+  stats.mode = 'fallback';
+  delete canvas?.dataset.ready;
+});
