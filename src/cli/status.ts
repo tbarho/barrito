@@ -1,5 +1,6 @@
 import { parseArgs } from 'node:util'
 import { paths } from '../paths.ts'
+import { glyphs } from '../glyphs.ts'
 import * as catalog from '../catalog.ts'
 import { check, select } from '../models.ts'
 import { read as readSettings } from '../settings.ts'
@@ -116,7 +117,7 @@ export const table = (config: { identities?: Record<string, unknown> } | null, d
     const s = data?.identities?.[id]
     const tier = !s || s.tier === 'max' || s.pin === 'max'
       ? 'max'
-      : `⚠ ${short(s.model ?? '')}`
+      : `${glyphs.warn} ${short(s.model ?? '')}`
     return [
       id.padEnd(11),
       tier.padEnd(14),
@@ -145,7 +146,7 @@ export const markdown = (config: { identities?: Record<string, unknown> } | null
   }
   const fell = (id: string): string => {
     const s = data?.identities?.[id]
-    return `⚠ ${cell(id)} fell back to ${cell(short(s?.model ?? ''))} (${cell(s?.reason ?? 'fallback')})`
+    return `${glyphs.warn} ${cell(id)} fell back to ${cell(short(s?.model ?? ''))} (${cell(s?.reason ?? 'fallback')})`
   }
   return [
     '| Identity | Tier | Max 5h | Max 7d | Resets | API today | Transforms |',

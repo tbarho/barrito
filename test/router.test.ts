@@ -395,6 +395,37 @@ test('chain walk: failed gateway hop → observe returns next chain entry', asyn
   }
 })
 
+test('every hop attempt is logged, not just the final one', async () => {
+  const tiers = fakeTiers({
+    route: { to: 'direct' },
+    retries: [
+      { retry: { to: 'direct', delay: 0 } },
+      { retry: { to: 'gateway', model: 'zai/glm-5.3', reason: 'throttle' } },
+    ],
+  })
+  const cap = capture((e) => {
+    if (e.url?.startsWith('/claude-code')) return ok(e, '{"ok":true}')
+    e.res.writeHead(429, { 'content-type': 'application/json' })
+    e.res.end('{}')
+  })
+  const r = await boot({ handler: cap.handler, tiers })
+  try {
+    const res = await call(r.port, '/v1/messages', {
+      body: JSON.stringify({ model: 'claude-sonnet-4.5', max_tokens: 8 }),
+      headers: claudeHeaders,
+    })
+    assert.equal(res.status, 200)
+    assert.equal(cap.seen.length, 3)
+    assert.equal(r.logs.length, 3)
+    for (const hop of [r.logs[0], r.logs[1]]) {
+      assert.match(hop ?? '', /^[\dT:.Z-]+ work POST \/v1\/messages claude-sonnet-4\.5 → direct 429 \(retry\)$/)
+    }
+    assert.match(r.logs[2] ?? '', / work POST \/v1\/messages zai\/glm-5\.3 → gateway \(throttle\) 200 \d+ms$/)
+  } finally {
+    await r.stop()
+  }
+})
+
 test('connect errors on every hop → 502 listing each hop and its error', async () => {
   const tiers = fakeTiers({
     route: { to: 'direct' },
@@ -1052,7 +1083,7 @@ test('transforms: applied once per request — retries reuse the same rewritten 
     assert.equal(cap.seen.length, 2)
     for (const e of cap.seen) assert.equal(parse(e.body).system, 'caveman says hi')
     assert.equal(res.headers.get('x-barrito-transforms'), 'rtk=2; caveman=lite')
-    assert.match(r.logs[0] ?? '', / t=rtk:2,cave:lite$/)
+    assert.match(r.logs.at(-1) ?? '', / t=rtk:2,cave:lite$/)
   } finally {
     await r.stop()
   }

@@ -111,9 +111,13 @@ $GITHUB_ENV, starts the router detached and waits for /health. stop writes
   barrito ci --identity work --gateway-key env:WORK_GATEWAY_KEY`,
   statusline: `usage: barrito statusline [--append <command>]
 
-Claude Code statusline hook: reads the stdin JSON and prints one line —
-identity, tier, Max usage, API spend and reset. Never throws. --append runs
-another statusline first and puts its output before ours.
+Claude Code statusline hook: reads the stdin JSON and prints one line — the
+session's model first, then what actually answers (tier, Max usage, API spend,
+reset). Never throws. --append runs another statusline first and puts its
+output before ours.
+
+ASCII only (tmux-safe): parts are " | "-separated, a reroute shows as
+"Opus 5.5 > GLM 5.3", no emoji or box glyphs ever.
 
   barrito statusline --append their-statusline`,
   uninstall: `usage: barrito uninstall [--restore] [--yes]

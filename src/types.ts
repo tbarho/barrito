@@ -99,7 +99,7 @@ export interface Resolution {
 // ── router / tiers ───────────────────────────────────────────────────────────
 
 export type Tier = 'max' | 'fallback' | 'pinned'
-export type Reason = 'quota' | 'outage' | 'pinned'
+export type Reason = 'quota' | 'throttle' | 'outage' | 'pinned'
 export type Pin = 'max' | string | null
 
 export type Route = { to: 'direct' } | { to: 'gateway'; model: string; reason: Reason }
@@ -367,6 +367,7 @@ export interface StatusData extends Omit<Status, 'pid' | 'uptime' | 'identities'
 export interface StatuslineInput {
   cwd?: string
   workspace?: { current_dir?: string }
+  model?: { id?: string; display_name?: string }
   rate_limits?: {
     resets_at?: string
     five_hour?: { used_percentage?: number }

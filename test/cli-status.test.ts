@@ -125,7 +125,7 @@ test('table matches the plan layout', () => {
   assert.deepEqual(lines, [
     'IDENTITY   TIER          MAX 5H   MAX 7D   RESETS   API TODAY  TRANSFORMS',
     `work       max           62%      41%      ${hhmm(resetA)}    $0.00      —`,
-    'personal   ⚠ glm-5.3     100%     88%      14:05    $1.84      —',
+    'personal   ! glm-5.3     100%     88%      14:05    $1.84      —',
   ])
 })
 
@@ -140,7 +140,7 @@ test('table TRANSFORMS column: rtk · cave:<level>, parts off omitted, saved tod
   }
   const lines = table({ identities: { work: idn(), personal: idn() } }, withTx)
   assert.equal(lines[1], `work       max           62%      41%      ${hhmm(resetA)}    $0.00      rtk · cave:ultra · 4.0kB saved`)
-  assert.equal(lines[2], 'personal   ⚠ glm-5.3     100%     88%      14:05    $1.84      —')
+  assert.equal(lines[2], 'personal   ! glm-5.3     100%     88%      14:05    $1.84      —')
 })
 
 test('parse extracts transforms state and rtk availability', () => {
@@ -168,7 +168,7 @@ test('status prints the table from a live /status server', async (t) => {
   assert.deepEqual(c.printed, [
     'IDENTITY   TIER          MAX 5H   MAX 7D   RESETS   API TODAY  TRANSFORMS',
     `work       max           62%      41%      ${hhmm(resetA)}    $0.00      —`,
-    'personal   ⚠ glm-5.3     100%     88%      14:05    $1.84      —',
+    'personal   ! glm-5.3     100%     88%      14:05    $1.84      —',
   ])
   assert.deepEqual(c.codes, [])
 })
@@ -197,7 +197,7 @@ test('markdown renders the GFM table plus a line per fallen-back identity', () =
     '| --- | --- | --- | --- | --- | --- | --- |',
     `| work | max | 62% | 41% | ${hhmm(resetA)} | $0.00 | — |`,
     '| personal | glm-5.3 | 100% | 88% | 14:05 | $1.84 | — |',
-    '⚠ personal fell back to glm-5.3 (quota)',
+    '! personal fell back to glm-5.3 (quota)',
   ])
 })
 
@@ -212,7 +212,7 @@ test('markdown escapes pipes, backticks and newlines in ids, models and reasons'
   }
   const lines = markdown({ identities: { 'bo|t`x': idn() } }, weird)
   assert.equal(lines[2], '| bo\\|t\\`x | glm\\|5\\` | 50% | 50% | — | $0.00 | — |')
-  assert.equal(lines[3], '⚠ bo\\|t\\`x fell back to glm\\|5\\` (quota)')
+  assert.equal(lines[3], '! bo\\|t\\`x fell back to glm\\|5\\` (quota)')
 })
 
 test('markdown with the router down prints a one-line note and exits 0', async () => {
@@ -235,7 +235,7 @@ test('status --markdown prints the table from a live /status server', async (t) 
     '| --- | --- | --- | --- | --- | --- | --- |',
     `| work | max | 62% | 41% | ${hhmm(resetA)} | $0.00 | — |`,
     '| personal | glm-5.3 | 100% | 88% | 14:05 | $1.84 | — |',
-    '⚠ personal fell back to glm-5.3 (quota)',
+    '! personal fell back to glm-5.3 (quota)',
   ])
 })
 

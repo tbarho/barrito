@@ -38,6 +38,7 @@ test('quota 429 retries first chain entry and notifies once', () => {
     to: 'direct', model: 'claude-sonnet-5', status: 429,
     headers: {
       'anthropic-ratelimit-unified-representative-claim': 'five_hour',
+      'anthropic-ratelimit-unified-5h-utilization': '1',
       'anthropic-ratelimit-unified-5h-reset': '3600',
     },
   })
@@ -53,7 +54,10 @@ test('quota 429 retries first chain entry and notifies once', () => {
 
 test('after quota, route sends to the current chain entry', () => {
   const { tiers } = setup()
-  tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: { 'retry-after': '60' } })
+  tiers.observe('personal', {
+    to: 'direct', model: 'claude-sonnet-5', status: 429,
+    headers: { 'anthropic-ratelimit-unified-5h-status': 'limited', 'retry-after': '60' },
+  })
   assert.deepEqual(tiers.route('personal', 'claude-sonnet-5'), {
     to: 'gateway', model: 'zai/glm-5.3', reason: 'quota',
   })
@@ -61,7 +65,10 @@ test('after quota, route sends to the current chain entry', () => {
 
 test('reset passed → route probes direct', () => {
   const { tiers, at } = setup()
-  tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: { 'retry-after': '60' } })
+  tiers.observe('personal', {
+    to: 'direct', model: 'claude-sonnet-5', status: 429,
+    headers: { 'anthropic-ratelimit-unified-5h-status': 'limited', 'retry-after': '60' },
+  })
   at(59_999)
   assert.equal(tiers.route('personal', 'claude-sonnet-5').to, 'gateway')
   at(60_000)
@@ -70,7 +77,10 @@ test('reset passed → route probes direct', () => {
 
 test('direct 2xx returns to max, records utilization, notifies "Max is back"', () => {
   const { tiers, notes, at } = setup()
-  tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: { 'retry-after': '60' } })
+  tiers.observe('personal', {
+    to: 'direct', model: 'claude-sonnet-5', status: 429,
+    headers: { 'anthropic-ratelimit-unified-5h-status': 'limited', 'retry-after': '60' },
+  })
   at(60_000)
   tiers.route('personal', 'claude-sonnet-5')
   const r = tiers.observe('personal', {
@@ -95,7 +105,10 @@ test('direct 2xx returns to max, records utilization, notifies "Max is back"', (
 
 test('2xx with limited status does not transition (it answered)', () => {
   const { tiers, notes, at } = setup()
-  tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: { 'retry-after': '60' } })
+  tiers.observe('personal', {
+    to: 'direct', model: 'claude-sonnet-5', status: 429,
+    headers: { 'anthropic-ratelimit-unified-5h-status': 'limited', 'retry-after': '60' },
+  })
   at(60_000)
   const r = tiers.observe('personal', {
     to: 'direct', model: 'claude-sonnet-5', status: 200,
@@ -115,6 +128,7 @@ test('representative claim picks 7d vs 5h reset', () => {
     to: 'direct', model: 'claude-sonnet-5', status: 429,
     headers: {
       'anthropic-ratelimit-unified-representative-claim': 'seven_day',
+      'anthropic-ratelimit-unified-7d-utilization': '1',
       'anthropic-ratelimit-unified-5h-reset': '111',
       'anthropic-ratelimit-unified-7d-reset': '999',
       'anthropic-ratelimit-unified-reset': '555',
@@ -162,21 +176,88 @@ test('claim naming a window with no reset header falls through', () => {
   assert.equal(tiers.snapshot().personal?.resetAt, 111 * 1000)
 })
 
-test('bare 429: retry-after, else unified reset, else 5h from now', () => {
+test('header-less 429 is a blip: one free direct retry, no state change, no notify', () => {
+  const { tiers, notes } = setup()
+  const r = tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: {} })
+  assert.deepEqual(r, { retry: { to: 'direct', delay: 0 } })
+  assert.equal(tiers.snapshot().personal?.tier, 'max')
+  assert.deepEqual(tiers.route('personal', 'claude-sonnet-5'), { to: 'direct' })
+  assert.equal(notes.length, 0)
+})
+
+test('header-less 429 with retry-after ≤ 5s honors it; over 5s retries immediately', () => {
   const a = setup()
-  a.tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: { 'retry-after': '30' } })
-  assert.equal(a.tiers.snapshot().personal?.resetAt, 30_000)
+  const short = a.tiers.observe('personal', {
+    to: 'direct', model: 'claude-sonnet-5', status: 429, headers: { 'retry-after': '2' },
+  })
+  assert.deepEqual(short, { retry: { to: 'direct', delay: 2000 } })
+
+  const b = setup()
+  const long = b.tiers.observe('personal', {
+    to: 'direct', model: 'claude-sonnet-5', status: 429, headers: { 'retry-after': '30' },
+  })
+  assert.deepEqual(long, { retry: { to: 'direct', delay: 0 } })
+})
+
+test('two header-less 429s enter throttle: ≤ 5 min reset, one notification', () => {
+  const { tiers, notes } = setup()
+  tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: {} })
+  const r = tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: {} })
+  assert.deepEqual(r, { retry: { to: 'gateway', model: 'zai/glm-5.3', reason: 'throttle' } })
+  const snap = tiers.snapshot().personal
+  assert.equal(snap?.tier, 'fallback')
+  assert.equal(snap?.reason, 'throttle')
+  assert.equal(snap?.model, 'zai/glm-5.3')
+  assert.equal(snap?.resetAt, 60_000) // no retry-after → 60s floor
+  assert.ok((snap?.resetAt ?? 0) <= 5 * 60_000)
+  assert.equal(notes.length, 1)
+  assert.equal(notes[0]?.message, 'personal — Anthropic throttling. GLM 5.3 on API credits for a few minutes.')
+})
+
+test('throttle reset honors retry-after, floored at 60s, capped at 5 min', () => {
+  const cases: [string, number][] = [['3', 60_000], ['120', 120_000], ['3600', 300_000]]
+  for (const [retryAfter, expected] of cases) {
+    const { tiers } = setup()
+    tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: {} })
+    tiers.observe('personal', {
+      to: 'direct', model: 'claude-sonnet-5', status: 429, headers: { 'retry-after': retryAfter },
+    })
+    assert.equal(tiers.snapshot().personal?.resetAt, expected, `retry-after ${retryAfter}`)
+  }
+})
+
+test('throttle probe: route goes direct after the reset; success returns to max', () => {
+  const { tiers, notes, at } = setup()
+  tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: {} })
+  tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: {} })
+  at(59_999)
+  assert.equal(tiers.route('personal', 'claude-sonnet-5').to, 'gateway')
+  at(60_000)
+  assert.deepEqual(tiers.route('personal', 'claude-sonnet-5'), { to: 'direct' })
+  const r = tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 200, headers: {} })
+  assert.deepEqual(r, { retry: null })
+  assert.equal(tiers.snapshot().personal?.tier, 'max')
+  assert.equal(notes.length, 2)
+  assert.equal(notes[1]?.message, 'personal — Max is back.')
+})
+
+test('header-confirmed 429 stays quota with the header window reset', () => {
+  const a = setup()
+  a.tiers.observe('personal', {
+    to: 'direct', model: 'claude-sonnet-5', status: 429,
+    headers: { 'anthropic-ratelimit-unified-status': 'rejected', 'retry-after': '30' },
+  })
+  const snapA = a.tiers.snapshot().personal
+  assert.equal(snapA?.reason, 'quota')
+  assert.equal(snapA?.resetAt, 30_000) // unified-status rejected but no reset header → retry-after
 
   const b = setup()
   b.tiers.observe('personal', {
     to: 'direct', model: 'claude-sonnet-5', status: 429,
-    headers: { 'anthropic-ratelimit-unified-reset': '12345' },
+    headers: { 'anthropic-ratelimit-unified-5h-status': 'rejected', 'anthropic-ratelimit-unified-5h-reset': '12345' },
   })
+  assert.equal(b.tiers.snapshot().personal?.reason, 'quota')
   assert.equal(b.tiers.snapshot().personal?.resetAt, 12345 * 1000)
-
-  const c = setup()
-  c.tiers.observe('bare', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: {} })
-  assert.equal(c.tiers.snapshot().bare?.resetAt, 5 * 3600 * 1000)
 })
 
 test('429 with allowed status is a blip: retry direct once, no transition, no notify', () => {
@@ -224,7 +305,7 @@ test('an outage free retry does not consume the blip direct retry a later 429 ea
   assert.equal(tiers.snapshot().personal?.tier, 'max')
 })
 
-test('second consecutive 429 (even allowed) enters quota so the turn never fails', () => {
+test('second consecutive 429 (even allowed) enters throttle so the turn never fails', () => {
   const { tiers, notes } = setup()
   tiers.observe('personal', {
     to: 'direct', model: 'claude-sonnet-5', status: 429,
@@ -234,11 +315,11 @@ test('second consecutive 429 (even allowed) enters quota so the turn never fails
     to: 'direct', model: 'claude-sonnet-5', status: 429,
     headers: { 'anthropic-ratelimit-unified-5h-status': 'allowed', 'retry-after': '3' },
   })
-  assert.deepEqual(r, { retry: { to: 'gateway', model: 'zai/glm-5.3', reason: 'quota' } })
+  assert.deepEqual(r, { retry: { to: 'gateway', model: 'zai/glm-5.3', reason: 'throttle' } })
   const snap = tiers.snapshot().personal
   assert.equal(snap?.tier, 'fallback')
-  assert.equal(snap?.reason, 'quota')
-  assert.equal(snap?.resetAt, 3_000)
+  assert.equal(snap?.reason, 'throttle')
+  assert.equal(snap?.resetAt, 60_000) // retry-after 3s floors at 60s
   assert.equal(notes.length, 1)
 })
 
@@ -327,7 +408,10 @@ test('failed probe backs off ×2 capped at 15m', () => {
 
 test('chain walk: failed hop → next entry, exhaustion → null, then fresh walk', () => {
   const { tiers } = setup()
-  tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: { 'retry-after': '3600' } })
+  tiers.observe('personal', {
+    to: 'direct', model: 'claude-sonnet-5', status: 429,
+    headers: { 'anthropic-ratelimit-unified-5h-status': 'limited', 'retry-after': '3600' },
+  })
   const a = tiers.observe('personal', { to: 'gateway', model: 'zai/glm-5.3', status: 429, headers: {} })
   assert.deepEqual(a, { retry: { to: 'gateway', model: 'deepseek/deepseek-v4.1-flash', reason: 'quota' } })
   assert.equal(tiers.snapshot().personal?.model, 'deepseek/deepseek-v4.1-flash')
@@ -356,7 +440,10 @@ test('chain membership ignores [1m] suffixes; returned models stay raw', () => {
     models: { labels: {} },
   }
   const { tiers, notes } = setup({ cfg })
-  const r = tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: { 'retry-after': '3600' } })
+  const r = tiers.observe('personal', {
+    to: 'direct', model: 'claude-sonnet-5', status: 429,
+    headers: { 'anthropic-ratelimit-unified-5h-status': 'limited', 'retry-after': '3600' },
+  })
   assert.deepEqual(r, { retry: { to: 'gateway', model: 'zai/glm-5.3[1m]', reason: 'quota' } })
   assert.match(notes[0]?.message ?? '', /Now GLM 5\.3 on API credits/)
   // the hop reports the model without the suffix — still entry 0
@@ -369,7 +456,10 @@ test('stale persisted model (chain changed) falls back to the head on route', ()
   const statePath = dir()
   const cfgA = { identities: { personal: { fallback: ['zai/glm-5.3', 'deepseek/deepseek-v4.1-flash'] } }, models: {} }
   const a = create({ config: cfgA, statePath, notify: () => {}, now: () => 0 })
-  a.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: { 'retry-after': '3600' } })
+  a.observe('personal', {
+    to: 'direct', model: 'claude-sonnet-5', status: 429,
+    headers: { 'anthropic-ratelimit-unified-5h-status': 'limited', 'retry-after': '3600' },
+  })
   a.observe('personal', { to: 'gateway', model: 'zai/glm-5.3', status: 500, headers: {} })
   const cfgB = { identities: { personal: { fallback: ['openai/gpt-6-astra'] } }, models: {} }
   const b = create({ config: cfgB, statePath, notify: () => {}, now: () => 1 })
@@ -378,8 +468,9 @@ test('stale persisted model (chain changed) falls back to the head on route', ()
   })
 })
 
-test('empty chain: quota and outage surface instead of routing gateway', () => {
+test('empty chain: a header-less 429 blips then surfaces; outage surfaces after its free retry', () => {
   const { tiers, notes } = setup()
+  assert.deepEqual(tiers.observe('none', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: {} }), { retry: { to: 'direct', delay: 0 } })
   assert.deepEqual(tiers.observe('none', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: {} }), { retry: null })
   assert.equal(tiers.snapshot().none?.tier, 'max')
   assert.deepEqual(tiers.observe('none', { to: 'direct', model: 'claude-sonnet-5', status: 529, headers: {} }), { retry: { to: 'direct', delay: 0 } })
@@ -398,10 +489,11 @@ test('gateway hop failure outside a fallback tier surfaces (no silent credits)',
   assert.deepEqual(tiers.observe('personal', { to: 'gateway', model: 'zai/glm-5.3', status: 429, headers: {} }), { retry: null })
 })
 
-test('pin max: quota 429 surfaces, outage gets one free direct retry then surfaces', () => {
+test('pin max: a header-less 429 blips once then surfaces; outage gets one free direct retry', () => {
   const { tiers, notes } = setup()
   tiers.pin('personal', 'max')
   assert.deepEqual(tiers.route('personal', 'claude-sonnet-5'), { to: 'direct' })
+  assert.deepEqual(tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: {} }), { retry: { to: 'direct', delay: 0 } })
   assert.deepEqual(tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: {} }), { retry: null })
   assert.deepEqual(tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 529, headers: {} }), { retry: { to: 'direct', delay: 0 } })
   assert.deepEqual(tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 529, headers: {} }), { retry: null })
@@ -453,7 +545,10 @@ test('state persists across create()', () => {
   const statePath = dir()
   const notes: number[] = []
   const first = create({ config, statePath, notify: () => notes.push(1), now: () => 0 })
-  first.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: { 'retry-after': '3600' } })
+  first.observe('personal', {
+    to: 'direct', model: 'claude-sonnet-5', status: 429,
+    headers: { 'anthropic-ratelimit-unified-5h-status': 'limited', 'retry-after': '3600' },
+  })
   first.pin('work', 'max')
 
   const second = create({ config, statePath, notify: () => notes.push(1), now: () => 1000 })
@@ -482,11 +577,17 @@ test('load drops garbage entries and unknown fields', () => {
 
 test('no duplicate notifications and since only marks entering quota', () => {
   const { tiers, notes, at } = setup()
-  tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: { 'retry-after': '60' } })
+  tiers.observe('personal', {
+    to: 'direct', model: 'claude-sonnet-5', status: 429,
+    headers: { 'anthropic-ratelimit-unified-5h-status': 'limited', 'retry-after': '60' },
+  })
   assert.equal(tiers.snapshot().personal?.since, 0)
   at(60_000)
   tiers.route('personal', 'claude-sonnet-5')
-  tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: { 'retry-after': '60' } })
+  tiers.observe('personal', {
+    to: 'direct', model: 'claude-sonnet-5', status: 429,
+    headers: { 'anthropic-ratelimit-unified-5h-status': 'limited', 'retry-after': '60' },
+  })
   assert.equal(notes.length, 1)
   const snap = tiers.snapshot().personal
   assert.equal(snap?.since, 0)
@@ -500,6 +601,9 @@ test('label comes from config.models.labels when set', () => {
   }
   const notes: string[] = []
   const tiers = create({ config: cfg, statePath: dir(), notify: (t, m) => notes.push(m), now: () => 0 })
-  tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: {} })
+  tiers.observe('personal', {
+    to: 'direct', model: 'claude-sonnet-5', status: 429,
+    headers: { 'anthropic-ratelimit-unified-5h-status': 'limited' },
+  })
   assert.match(notes[0] ?? '', /^personal — Max spent\. Now GLM 5\.3 cheap on API credits/)
 })

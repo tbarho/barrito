@@ -76,19 +76,24 @@ Template vars: `{gateway}`, `{handle}` (`barrito:<id>`), `{identity}`, `{keychai
 
 Cheap first, loudly. A per-identity state machine (persisted to the state dir's `tiers.json`) keeps a spent quota spent across restarts.
 
-- **Quota:** a direct 429 moves the identity to `fallback(quota)` until the reset timestamp from Anthropic's rate-limit headers; the next request after that probes direct again. A 429 whose status headers still say `allowed` is a blip — one free direct retry.
+- **Quota:** a direct 429 moves the identity to `fallback(quota)` until the reset timestamp from Anthropic's rate-limit headers — but only when those headers confirm it (`unified-status: rejected`, a window status `limited`/`rejected`, or a representative claim at 100%+). The next request after the reset probes direct again.
+- **Throttle:** a header-less 429 (or one whose status headers still say `allowed`) is a transient blip — one free direct retry honoring `retry-after`. If that also 429s without quota headers, the identity enters `fallback(throttle)`: a short probe (60s, capped at 5 min, never a 5-hour exile) on the fallback chain, back to max on the first successful probe.
 - **Outage:** a direct 529/5xx/connect error earns one free direct retry; a second within 60s opens the breaker, which half-opens after 60s and backs off ×2 up to 15m.
 - The triggering error arrives before any stream bytes, so the same request is retried on the fallback chain immediately. You see an answer, not an error. If every chain entry fails, you get an Anthropic-shaped error listing each hop.
 
 Loud on every transition, silent otherwise:
 
 ```
-statusline     work · Max 62%
-               personal · ⚠ GLM 5.3 · API $ · Max ↺ 14:05
+statusline     work | Max 62%
+               work | Opus 5.5 | Max 3%            (session model first)
+               personal | Opus 5.5 > GLM 5.3 (API) | Max resets 14:05
+               personal | Opus 5.5 > GLM 5.3 (API) | throttled, retry 14:05
 notification   barrito · personal — Max spent. Now GLM 5.3 on API credits until 14:05.
                barrito · personal — Max is back.
 header         x-barrito-tier: fallback:glm-5.3; reason=quota; reset=2026-10-01T14:05:00-05:00
 ```
+
+The statusline is ASCII only (tmux-safe): parts are ` | `-separated, a reroute shows as `Opus 5.5 > GLM 5.3`, no emoji or box glyphs. Every upstream hop is logged — a 429 can't disappear silently.
 
 | Want | How | Scope |
 | --- | --- | --- |
@@ -115,7 +120,7 @@ caveman = "lite"
 caveman = "ultra"
 ```
 
-Set them per identity — `barrito set work caveman ultra`, `barrito set personal rtk off`, `barrito set work --reset` (back to the config defaults) — or from inside Claude Code: `/barrito rtk on`, `/barrito caveman ultra`, which target the session's identity (`$BARRITO_IDENTITY`). The statusline shows what's active (`work · Max 62% · rtk · cave:lite`) and `barrito status` shows tokens saved today.
+Set them per identity — `barrito set work caveman ultra`, `barrito set personal rtk off`, `barrito set work --reset` (back to the config defaults) — or from inside Claude Code: `/barrito rtk on`, `/barrito caveman ultra`, which target the session's identity (`$BARRITO_IDENTITY`). The statusline shows what's active (`work | Max 62% | rtk | cave:lite`) and `barrito status` shows tokens saved today.
 
 RTK is its authors' tool — barrito just pipes through it.
 

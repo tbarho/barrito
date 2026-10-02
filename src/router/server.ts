@@ -165,6 +165,8 @@ const claude = async (req: IncomingMessage, res: ServerResponse, ctx: ServeCtx):
       up = a.up // chain done but upstream answered → surface that response verbatim
       break
     }
+    // every hop is logged, not just the final one — a silent 429 must be greppable
+    log(`${new Date().toISOString()} ${id} ${req.method ?? ''} ${req.url ?? ''} ${ask} → ${to} ${a.error ? 0 : a.up.status} (retry)`)
     to = obs.retry.to
     model = 'model' in obs.retry ? obs.retry.model : undefined
     reason = ('reason' in obs.retry ? obs.retry.reason : undefined) || reason

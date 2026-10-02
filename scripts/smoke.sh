@@ -3,6 +3,8 @@
 # dist runs standalone — templates resolve via root(), no .ts files shipped.
 # Never touches the real HOME, shims, Keychain or port 4141.
 set -euo pipefail
+# hermetic: the caller's barrito env (shims export BARRITO_IDENTITY etc.) must not leak in
+for v in $(env | grep -oE "^BARRITO_[A-Z_]+"); do unset "$v"; done
 cd "$(dirname "$0")/.."
 
 yarn build

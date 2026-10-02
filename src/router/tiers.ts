@@ -8,6 +8,8 @@ const HOUR = 3600e3
 const WINDOW = 60e3
 const MAX_BACKOFF = 15 * 60e3
 const BLIP = 5e3
+const THROTTLE_MIN = 60e3
+const THROTTLE_MAX = 5 * 60e3
 
 type Headers = Record<string, string | null | undefined>
 // Observation accepts omitted model/headers on direct hops (server always sends both)
@@ -60,13 +62,14 @@ const H = {
 }
 
 // binding window reset: claim picks the window; claim absent or its reset missing →
-// the limited window's reset (7d wins if both); then unified-reset
+// the blocked (limited/rejected) window's reset (7d wins if both); then unified-reset
+const blocked = (v: string | null | undefined): boolean => v === 'limited' || v === 'rejected'
 const resetFrom = (h: Headers): number | null => {
   const claim = h[H.claim]
   if (claim === 'seven_day') { const v = when(h[H.reset7d]); if (v !== null) return v }
   if (claim === 'five_hour') { const v = when(h[H.reset5h]); if (v !== null) return v }
-  if (h[H.status7d] === 'limited') { const v = when(h[H.reset7d]); if (v !== null) return v }
-  if (h[H.status5h] === 'limited') { const v = when(h[H.reset5h]); if (v !== null) return v }
+  if (blocked(h[H.status7d])) { const v = when(h[H.reset7d]); if (v !== null) return v }
+  if (blocked(h[H.status5h])) { const v = when(h[H.reset5h]); if (v !== null) return v }
   return when(h[H.unifiedReset])
 }
 
@@ -76,10 +79,18 @@ const quotaReset = (h: Headers, now: Clock): number =>
   ?? (() => { const ra = num(h, 'retry-after'); return ra === null ? null : now() + ra * 1000 })()
   ?? now() + 5 * HOUR
 
-const allowed = (h: Headers): boolean =>
-  h[H.status5h] === 'allowed' || h[H.status7d] === 'allowed' || h[H.unifiedStatus] === 'allowed'
-
 const limited = (h: Headers): boolean => h[H.status5h] === 'limited' || h[H.status7d] === 'limited'
+
+// a 429 means "Max spent" only when the unified headers confirm it; a bare 429
+// (or one whose status headers still say allowed) is a transient throttle
+const confirmed = (h: Headers): boolean => {
+  if (h[H.unifiedStatus] === 'rejected') return true
+  if (blocked(h[H.status5h]) || blocked(h[H.status7d])) return true
+  const claim = h[H.claim]
+  if (claim !== 'five_hour' && claim !== 'seven_day') return false
+  const util = num(h, claim === 'seven_day' ? H.util7d : H.util5h)
+  return util !== null && util >= 1
+}
 
 const ok = (status: number): boolean => status >= 200 && status < 300
 
@@ -151,28 +162,38 @@ export const create = ({
     return ra !== null && ra * 1000 <= BLIP ? ra * 1000 : 0
   }
 
+  // short throttle probe: retry-after floored at 60s, capped at 5 minutes
+  const throttleReset = (h: Headers): number => {
+    const ra = num(h, 'retry-after')
+    return now() + Math.min(Math.max(ra === null ? 0 : ra * 1000, THROTTLE_MIN), THROTTLE_MAX)
+  }
+
   const quota = (id: string, s: State, ch: string[], h: Headers): Verdict => {
-    if (!limited(h) && allowed(h) && !s.blipRetry) {
-      // short RPS blip: 429 but the status headers say allowed — retry direct once
+    const hard = confirmed(h)
+    if (!hard && !s.blipRetry) {
+      // transient throttle: 429 the headers don't blame on quota — retry direct
+      // once honoring retry-after (≤ 5s, else immediate), no state change
       s.blipRetry = true
       save()
       return { retry: { to: 'direct', delay: blipDelay(h) } }
     }
     if (!ch.length || s.pin === 'max') return { retry: null }
     const head = ch[0]!
-    const was = s.tier === 'fallback' && s.reason === 'quota'
+    const was = s.tier === 'fallback' && s.reason === (hard ? 'quota' : 'throttle')
     s.tier = 'fallback'
-    s.reason = 'quota'
+    s.reason = hard ? 'quota' : 'throttle'
     s.model = head
-    const resetAt = quotaReset(h, now)
+    const resetAt = hard ? quotaReset(h, now) : throttleReset(h)
     s.resetAt = resetAt
     s.failAt = null
     s.blipRetry = false
     s.outageRetry = false
     if (!was) s.since = now() // since marks entering a state, not repeats
     save()
-    if (!was) say(`${id} — Max spent. Now ${label(config, head)} on API credits until ${hhmm(resetAt)}.`)
-    return { retry: { to: 'gateway', model: head, reason: 'quota' } }
+    if (!was) say(hard
+      ? `${id} — Max spent. Now ${label(config, head)} on API credits until ${hhmm(resetAt)}.`
+      : `${id} — Anthropic throttling. ${label(config, head)} on API credits for a few minutes.`)
+    return { retry: { to: 'gateway', model: head, reason: hard ? 'quota' : 'throttle' } }
   }
 
   const outage = (id: string, s: State, ch: string[]): Verdict => {
@@ -234,7 +255,9 @@ export const create = ({
     if (reset !== null && s.resetAt !== reset) { s.resetAt = reset; dirty = true }
     if (s.failAt !== null || s.blipRetry || s.outageRetry) { s.failAt = null; s.blipRetry = false; s.outageRetry = false; dirty = true }
     if (dirty) save()
-    if (limited(h)) return quietQuota(s, h)
+    // a throttle fallback always clears on a 2xx (it was transient); quota keeps
+    // its window, and a limited-status 2xx only refreshes it (it answered)
+    if (limited(h) && s.reason !== 'throttle') return quietQuota(s, h)
     if (s.tier === 'fallback') toMax(id, s)
     return { retry: null }
   }
@@ -266,7 +289,7 @@ export const create = ({
       if (s.pin === 'max') return { to: 'direct' }
       if (s.pin) return { to: 'gateway', model: s.pin, reason: 'pinned' }
       if (s.tier !== 'fallback') return { to: 'direct' }
-      if (s.reason === 'quota' && s.resetAt !== null && now() >= s.resetAt) return { to: 'direct' }
+      if ((s.reason === 'quota' || s.reason === 'throttle') && s.resetAt !== null && now() >= s.resetAt) return { to: 'direct' }
       if (s.reason === 'outage' && s.halfOpenAt !== null && now() >= s.halfOpenAt) return { to: 'direct' }
       const ch = chain(id)
       const model = ch.find((entry) => bare(entry) === bare(s.model)) ?? ch[0] // stale → head
