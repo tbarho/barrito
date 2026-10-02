@@ -4,7 +4,7 @@ import http from 'node:http'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { default as statusCmd, parse, table, markdown } from '../src/cli/status.ts'
+import { default as statusCmd, parse, table, markdown, throttles } from '../src/cli/status.ts'
 import { default as pin } from '../src/cli/pin.ts'
 import { default as unpin } from '../src/cli/unpin.ts'
 import { root } from '../src/paths.ts'
@@ -470,4 +470,16 @@ test('table columns grow for long cells so rows stay aligned; paint colors tiers
   assert.match(painted[0] ?? '', /^<IDENTITY> {3}<TIER>/)
   assert.match(painted[1] ?? '', /^work {7}<max>/)
   assert.match(painted[2] ?? '', /^personal {3}<! glm-5\.3>/)
+})
+
+test('throttles: per-identity note for unconfirmed 429s passed to Claude Code today', () => {
+  const data = parse({
+    pid: 1, uptime: 1, spend: {},
+    identities: { work: { tier: 'max', throttled429Today: 12 }, personal: { tier: 'max', throttled429Today: 1 }, ci: { tier: 'max', throttled429Today: 0 } },
+  })
+  assert.deepEqual(throttles({ identities: { work: idn(), personal: idn(), ci: idn() } }, data), [
+    'work: 12 throttled 429s passed to Claude Code today',
+    'personal: 1 throttled 429 passed to Claude Code today',
+  ])
+  assert.deepEqual(throttles({ identities: { work: idn() } }, parse({ identities: { work: { tier: 'max' } } })), [])
 })

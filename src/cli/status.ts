@@ -149,6 +149,13 @@ export const table = (
   ]
 }
 
+// unconfirmed 429s passed through to Claude Code's own backoff — visible so burst patterns show
+export const throttles = (config: { identities?: Record<string, unknown> } | null, data: StatusData | null): string[] =>
+  ids(config, data).flatMap((id) => {
+    const n = num(data?.identities?.[id]?.throttled429Today) ?? 0
+    return n > 0 ? [`${id}: ${n} throttled 429${n > 1 ? 's' : ''} passed to Claude Code today`] : []
+  })
+
 // GFM cell-safe: pipes and backticks would break the table, newlines break the row
 const cell = (s: string): string => s.replaceAll('|', '\\|').replaceAll('`', '\\`').replace(/[\r\n]+/g, ' ')
 
@@ -168,6 +175,7 @@ export const markdown = (config: { identities?: Record<string, unknown> } | null
     '| --- | --- | --- | --- | --- | --- | --- |',
     ...ids(config, data).map(row),
     ...ids(config, data).filter((id) => data?.identities?.[id]?.tier === 'fallback').map(fell),
+    ...throttles(config, data).map(cell),
   ]
 }
 
@@ -200,6 +208,7 @@ export default async (argv: string[], ctx: CommandCtx): Promise<void> => {
   if (values.markdown) return markdown(ctx.config, parse(data)).forEach((line) => ctx.print(line))
 
   table(ctx.config, parse(data), pc).forEach((line) => ctx.print(line))
+  throttles(ctx.config, parse(data)).forEach((line) => ctx.print(pc.dim(line)))
 
   const models = catalog.cached({ statePath: paths.state })
   if (!models) return

@@ -77,7 +77,7 @@ Template vars: `{gateway}`, `{handle}` (`barrito:<id>`), `{identity}`, `{keychai
 Cheap first, loudly. A per-identity state machine (persisted to the state dir's `tiers.json`) keeps a spent quota spent across restarts.
 
 - **Quota:** a direct 429 moves the identity to `fallback(quota)` until the reset timestamp from Anthropic's rate-limit headers — but only when those headers confirm it (`unified-status: rejected`, a window status `limited`/`rejected`, or a representative claim at 100%+). The next request after the reset probes direct again.
-- **Throttle:** a header-less 429 (or one whose status headers still say `allowed`) is a transient blip — one free direct retry honoring `retry-after`. If that also 429s without quota headers, the identity enters `fallback(throttle)`: a short probe (60s, capped at 5 min, never a 5-hour exile) on the fallback chain, back to max on the first successful probe.
+- **Burst 429s pass through:** a 429 the headers don't confirm as quota (header-less, or status still `allowed` — typical when several sessions/subagents burst at once) is never a reason to spend API credits. barrito forwards Anthropic's 429 to Claude Code verbatim (status, `retry-after`, body), no tier change, no notification; Claude Code backs off and retries on its own. Each one is logged (`→ direct 429 (passthrough) [rate_limit_error: …]`) and counted per identity — `barrito status` notes `work: 12 throttled 429s passed to Claude Code today`.
 - **Outage:** a direct 529/5xx/connect error earns one free direct retry; a second within 60s opens the breaker, which half-opens after 60s and backs off ×2 up to 15m.
 - The triggering error arrives before any stream bytes, so the same request is retried on the fallback chain immediately. You see an answer, not an error. If every chain entry fails, you get an Anthropic-shaped error listing each hop.
 
@@ -87,7 +87,6 @@ Loud on every transition, silent otherwise:
 statusline     work | Max 62%
                work | Opus 5.5 | Max 3%            (session model first)
                personal | Opus 5.5 > GLM 5.3 (API) | Max resets 14:05
-               personal | Opus 5.5 > GLM 5.3 (API) | throttled, retry 14:05
 notification   barrito · personal — Max spent. Now GLM 5.3 on API credits until 14:05.
                barrito · personal — Max is back.
 header         x-barrito-tier: fallback:glm-5.3; reason=quota; reset=2026-10-01T14:05:00-05:00
@@ -179,7 +178,7 @@ Every command answers `--help` before doing anything. The CLI also answers `--ve
 | Command | Does |
 | --- | --- |
 | `barrito init [--dry-run] [--yes]` | Wizard: detect, identities, logins, fallback, graft, write everything. Prints the plan before writing. Re-run to edit; `--dry-run` writes nothing. |
-| `barrito status [--json] [--markdown]` | Tier per identity, Max 5h/7d usage, reset times, API spend today. `--json` dumps the raw router payload; `--markdown` renders the same table for step summaries. |
+| `barrito status [--json] [--markdown]` | Tier per identity, Max 5h/7d usage, reset times, API spend today, plus a note per identity with throttled 429s passed to Claude Code today. `--json` dumps the raw router payload; `--markdown` renders the same table for step summaries. |
 | `barrito which [path] [--json]` | Identity for a path and the rule that matched (env, remote, path, default). |
 | `barrito doctor [--json]` | PATH order, shims, service health, logins, secret refs, catalog drift, host restarts needed. Non-zero exit on any ✗. |
 | `barrito history sync [--apply] [--json] [--include-unknown <identity>]` | Find project histories (sessions + memory) living in the wrong identity's Claude dir; dry run by default, `--apply` copies them (never moves or overwrites). |

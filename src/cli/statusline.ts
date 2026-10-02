@@ -72,7 +72,7 @@ const ours = async (raw: string, config: Config, { fetch: f = fetch, resolve: r 
   const reset = (): string => {
     const at = resets ?? s?.resetAt ?? null
     if (at == null) return ''
-    return s?.reason === 'throttle' ? `${glyphs.throttled} ${hhmm(at)}` : `${glyphs.resets} ${hhmm(at)}`
+    return `${glyphs.resets} ${hhmm(at)}`
   }
 
   if (explicit) return [id, on(m ?? '')].join(glyphs.sep) + tail

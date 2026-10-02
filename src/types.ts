@@ -122,7 +122,7 @@ export interface HistoryMove extends HistoryProject {
 // ── router / tiers ───────────────────────────────────────────────────────────
 
 export type Tier = 'max' | 'fallback' | 'pinned'
-export type Reason = 'quota' | 'throttle' | 'outage' | 'pinned'
+export type Reason = 'quota' | 'outage' | 'pinned'
 export type Pin = 'max' | string | null
 
 export type Route = { to: 'direct' } | { to: 'gateway'; model: string; reason: Reason }
@@ -148,6 +148,7 @@ export interface TierSnapshot {
   util5h: number | null
   util7d: number | null
   pin: Pin
+  throttled429Today: number // unconfirmed 429s passed through to Claude Code today
 }
 
 export interface Tiers {

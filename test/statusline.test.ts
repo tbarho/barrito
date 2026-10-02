@@ -198,16 +198,6 @@ test('fallback tier: session model, arrow, the model actually answering, spend, 
   assert.deepEqual(out, [`work | Opus 5.5 > GLM 5.3 (API) | Max resets ${at(17, 50)}`])
 })
 
-test('throttle fallback says throttled with the short probe reset', async () => {
-  const resetAt = new Date(2026, 9, 1, 17, 56).getTime()
-  const data = {
-    identities: { work: { tier: 'fallback', reason: 'throttle', model: 'zai/glm-5.3', resetAt } },
-    spend: { work: 0.4 },
-  }
-  const out = await run([], JSON.stringify({ cwd: 'work', model: { id: 'claude-opus-5-5' } }), ok(data))
-  assert.deepEqual(out, [`work | Opus 5.5 > GLM 5.3 (API) | throttled, retry ${at(17, 56)}`])
-})
-
 test('explicit gateway picker row: no arrow, no Max, just the model (and spend)', async () => {
   const data = { identities: { personal: { tier: 'max' } }, spend: { personal: 0.5 } }
   const stdin = JSON.stringify({

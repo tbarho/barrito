@@ -8,7 +8,6 @@ export const glyphs = {
   reroute: ' > ', // session's model vs what actually answers
   api: '(API)', // API credits, not Max plan
   resets: 'Max resets', // quota window reset prefix
-  throttled: 'throttled, retry', // throttle probe reset prefix
   pin: 'pin', // identity pinned to a model
   pinMax: 'pin max', // identity pinned to max
 }

@@ -199,8 +199,12 @@ const claude = async (req: IncomingMessage, res: ServerResponse, ctx: ServeCtx):
     return
   }
 
+  const { ask, price } = labels(to, model, parsed)
+  // a direct 429 reaching the client is passed through for Claude Code's own backoff — keep it greppable
+  if (kind === 'tiers' && to === 'direct' && up.status === 429) {
+    log(`${new Date().toISOString()} ${id} ${req.method ?? ''} ${req.url ?? ''} ${ask} → direct 429 (passthrough)${await why({ up: up.clone() })}`)
+  }
   const sse = (up.headers.get('content-type') || '').includes('text/event-stream')
-  const { price } = labels(to, model, parsed)
   const m = meter()
   reply(up, res, {
     tier: tierHeader(tiers.snapshot()[id]),

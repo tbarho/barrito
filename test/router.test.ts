@@ -5,6 +5,10 @@ import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:
 import type { AddressInfo } from 'node:net'
 import { once } from 'node:events'
 import { start } from '../src/router/server.ts'
+import { create as createTiers } from '../src/router/tiers.ts'
+import fs from 'node:fs'
+import os from 'node:os'
+import nodePath from 'node:path'
 import type {
   Applied,
   Config,
@@ -212,7 +216,7 @@ const boot = async ({
   maxBody,
 }: {
   handler: (req: IncomingMessage, res: ServerResponse) => void
-  tiers?: FakeTiers
+  tiers?: StartOpts['tiers']
   keys?: FakeKeys
   spend?: FakeSpend
   transforms?: Transforms
@@ -400,12 +404,12 @@ test('every hop attempt is logged, not just the final one', async () => {
     route: { to: 'direct' },
     retries: [
       { retry: { to: 'direct', delay: 0 } },
-      { retry: { to: 'gateway', model: 'zai/glm-5.3', reason: 'throttle' } },
+      { retry: { to: 'gateway', model: 'zai/glm-5.3', reason: 'outage' } },
     ],
   })
   const cap = capture((e) => {
     if (e.url?.startsWith('/claude-code')) return ok(e, '{"ok":true}')
-    e.res.writeHead(429, { 'content-type': 'application/json' })
+    e.res.writeHead(503, { 'content-type': 'application/json' })
     e.res.end('{}')
   })
   const r = await boot({ handler: cap.handler, tiers })
@@ -418,9 +422,9 @@ test('every hop attempt is logged, not just the final one', async () => {
     assert.equal(cap.seen.length, 3)
     assert.equal(r.logs.length, 3)
     for (const hop of [r.logs[0], r.logs[1]]) {
-      assert.match(hop ?? '', /^[\dT:.Z-]+ work POST \/v1\/messages claude-sonnet-4\.5 → direct 429 \(retry\)$/)
+      assert.match(hop ?? '', /^[\dT:.Z-]+ work POST \/v1\/messages claude-sonnet-4\.5 → direct 503 \(retry\)$/)
     }
-    assert.match(r.logs[2] ?? '', / work POST \/v1\/messages zai\/glm-5\.3 → gateway \(throttle\) 200 \d+ms$/)
+    assert.match(r.logs[2] ?? '', / work POST \/v1\/messages zai\/glm-5\.3 → gateway \(outage\) 200 \d+ms$/)
   } finally {
     await r.stop()
   }
@@ -450,6 +454,61 @@ test('connect errors on every hop → 502 listing each hop and its error', async
     assert.match(body.error?.message ?? '', /gateway:zai\/glm-5\.3 /)
     assert.deepEqual(tiers.calls.observe.map((o) => o.status), [0, 0])
     assert.ok(tiers.calls.observe.every((o) => o.error))
+  } finally {
+    await r.stop()
+  }
+})
+
+test('unconfirmed direct 429 (real tiers) → forwarded verbatim to Claude Code, no gateway hop, no notify, counted', async () => {
+  const notes: string[] = []
+  const statePath = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'barrito-router-tiers-'))
+  const tiers = createTiers({ config: config(), statePath, notify: (_t, m) => notes.push(m) })
+  const body = '{"type":"error","error":{"type":"rate_limit_error","message":"Error"}}'
+  const cap = capture((e) => {
+    e.res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '7' })
+    e.res.end(body)
+  })
+  const r = await boot({ handler: cap.handler, tiers })
+  try {
+    const res = await call(r.port, '/v1/messages', {
+      body: JSON.stringify({ model: 'claude-sonnet-4.5', max_tokens: 8 }),
+      headers: claudeHeaders,
+    })
+    assert.equal(res.status, 429)
+    assert.equal(res.headers.get('retry-after'), '7')
+    assert.equal(await res.text(), body)
+    assert.equal(res.headers.get('x-barrito-tier'), 'max')
+    assert.equal(cap.seen.length, 1)
+    assert.ok(cap.seen.every((e) => !e.url?.startsWith('/claude-code')))
+    assert.deepEqual(notes, [])
+    assert.equal(tiers.snapshot().work?.tier, 'max')
+    assert.equal(tiers.snapshot().work?.throttled429Today, 1)
+    assert.ok(r.logs.some((l) => / work POST \/v1\/messages claude-sonnet-4\.5 → direct 429 \(passthrough\) \[rate_limit_error: Error\]$/.test(l)))
+  } finally {
+    await r.stop()
+  }
+})
+
+test('confirmed direct 429 (real tiers) → falls back to the gateway', async () => {
+  const notes: string[] = []
+  const statePath = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'barrito-router-tiers-'))
+  const tiers = createTiers({ config: config(), statePath, notify: (_t, m) => notes.push(m) })
+  const cap = capture((e) => {
+    if (e.url?.startsWith('/claude-code')) return ok(e, '{"ok":true}')
+    e.res.writeHead(429, { 'content-type': 'application/json', 'anthropic-ratelimit-unified-status': 'rejected' })
+    e.res.end('{}')
+  })
+  const r = await boot({ handler: cap.handler, tiers })
+  try {
+    const res = await call(r.port, '/v1/messages', {
+      body: JSON.stringify({ model: 'claude-sonnet-4.5', max_tokens: 8 }),
+      headers: claudeHeaders,
+    })
+    assert.equal(res.status, 200)
+    assert.equal(cap.seen.length, 2)
+    assert.equal(parse(cap.seen[1]?.body).model, 'claude-code/zai/glm-5.3')
+    assert.equal(tiers.snapshot().work?.reason, 'quota')
+    assert.equal(notes.length, 1)
   } finally {
     await r.stop()
   }
