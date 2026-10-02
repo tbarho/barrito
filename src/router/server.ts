@@ -49,6 +49,22 @@ const labels = (to: 'direct' | 'gateway', model: string | undefined, parsed: Par
   return { ask, price: to === 'direct' ? ask : catalogId(ask) }
 }
 
+// a retried hop's body is discarded anyway; surface the upstream error type/message (never request content)
+const why = async (a: Attempt): Promise<string> => {
+  if (!a.up) return ''
+  try {
+    const text = (await a.up.text()).slice(0, 2048)
+    const body: unknown = JSON.parse(text)
+    const err = typeof body === 'object' && body !== null && 'error' in body ? (body as { error: unknown }).error : null
+    if (typeof err !== 'object' || err === null) return ''
+    const e = err as { type?: unknown; message?: unknown }
+    const msg = typeof e.message === 'string' ? e.message.replace(/\s+/g, ' ').slice(0, 200) : ''
+    return ` [${typeof e.type === 'string' ? e.type : 'error'}${msg ? `: ${msg}` : ''}]`
+  } catch {
+    return ''
+  }
+}
+
 // one upstream attempt: direct or gateway hop, body model rewritten per target
 const attempt = async (
   req: IncomingMessage,
@@ -166,7 +182,7 @@ const claude = async (req: IncomingMessage, res: ServerResponse, ctx: ServeCtx):
       break
     }
     // every hop is logged, not just the final one — a silent 429 must be greppable
-    log(`${new Date().toISOString()} ${id} ${req.method ?? ''} ${req.url ?? ''} ${ask} → ${to} ${a.error ? 0 : a.up.status} (retry)`)
+    log(`${new Date().toISOString()} ${id} ${req.method ?? ''} ${req.url ?? ''} ${ask} → ${to} ${a.error ? 0 : a.up.status} (retry)${await why(a)}`)
     to = obs.retry.to
     model = 'model' in obs.retry ? obs.retry.model : undefined
     reason = ('reason' in obs.retry ? obs.retry.reason : undefined) || reason
