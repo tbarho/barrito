@@ -11,7 +11,7 @@ import { available as linuxKeyring } from '../keychain/linux.ts'
 import * as service from '../service/index.ts'
 import { cached, refresh } from '../catalog.ts'
 import { scan, runGit } from '../graft.ts'
-import { account } from '../claude.ts'
+import { account, loginCommand } from '../claude.ts'
 import { detect, keyringRefs, probe } from '../detect.ts'
 import type { ClaudeAccount } from '../detect.ts'
 import { create as createBackup } from '../backup.ts'
@@ -310,6 +310,7 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
 
   let share = true
   let historiesAnswer = true
+  const accounts: Record<string, string> = {}
   for (const [id, identity] of Object.entries(draft)) {
     ui.section(`Identity ${g.dot} ${id}${id === defaultId ? ' (default)' : ''}`)
     const login = loginFor(identity.claude_config_dir)
@@ -323,12 +324,15 @@ export default async (argv: string[], ctx: Ctx & { io?: Io }): Promise<void> => 
       ['gateway', secret('gateway', gateway, id)],
       ['cursor', secret('cursor', cursor, id)],
     ])
+    const twin = login.uuid ? accounts[login.uuid] : undefined
+    if (login.uuid && !twin) accounts[login.uuid] = id
+    if (twin) ui.item(ui.mark('bad'), `same Claude account as ${twin} (${login.email ?? 'one login'}) — both would bill one Max plan; log ${id} in with its own account`)
     if (gateway.startsWith('env:') && !have(gateway)) ui.note(`export ${gateway.slice(4)}=<vercel ai gateway key>`)
     if (cursor.startsWith('env:') && !have(cursor)) ui.note(`export ${cursor.slice(4)}=<cursor key>`)
     // never spawn `claude` for the login: its first-run onboarding in a fresh config dir
     // takes over the terminal (theme, login, trust) and asks twice — the user runs it
     if (!login.loggedIn) {
-      ui.note(`log in from another terminal:  CLAUDE_CONFIG_DIR=${short(identity.claude_config_dir)} claude  ${g.arrow}  /login`)
+      ui.note(`log in from another terminal:  ${loginCommand(identity.claude_config_dir, short)}  ${g.arrow}  /login`)
       ui.note('tip: open the sign-in URL in a private browser window when the browser is signed into a different account')
       if (!yes && !dry) {
         let email: string | null = null

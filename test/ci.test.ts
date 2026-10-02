@@ -280,5 +280,5 @@ test('CLAUDE_CODE_OAUTH_TOKEN in env counts as logged in without touching the fi
   const fs = {
     readFileSync: () => { throw new Error('should not read ~/.claude.json') },
   }
-  assert.deepEqual(account(path.join(tmp, '.claude'), { env: { CLAUDE_CODE_OAUTH_TOKEN: 'tok' }, fs, home: tmp }), { loggedIn: true, email: null })
+  assert.deepEqual(account(path.join(tmp, '.claude'), { env: { CLAUDE_CODE_OAUTH_TOKEN: 'tok' }, fs, home: tmp }), { loggedIn: true, email: null, uuid: null })
 })

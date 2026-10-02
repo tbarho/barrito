@@ -90,6 +90,7 @@ export const rcOf = ({ home, shell, fs = fsx, platform: pf = platform() }: RcOpt
 export interface ClaudeAccount {
   loggedIn: boolean
   email: string | null
+  uuid?: string | null
 }
 
 export type Creds = (fs: typeof fsx, dir: string, home: string) => ClaudeAccount

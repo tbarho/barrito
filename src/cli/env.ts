@@ -44,7 +44,8 @@ export default (async (argv: string[], ctx: CommandCtx): Promise<void> => {
 
   const out = Object.keys(env)
     .sort()
-    .map((k) => (shell ? `export ${k}=${quote(env[k]!)}` : `${k}=${env[k]}`))
+    // '' = unset: an empty CLAUDE_CONFIG_DIR still counts as set in parts of Claude Code
+    .map((k) => (shell ? (env[k] === '' ? `unset ${k}` : `export ${k}=${quote(env[k]!)}`) : `${k}=${env[k]}`))
     .join('\n')
   if (out) ctx.print(out)
 

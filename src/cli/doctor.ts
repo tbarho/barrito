@@ -111,6 +111,20 @@ const legacy = (exec: Exec): DoctorCheck | null => {
 
 const loggedIn = (dir: string): boolean => account(dir).loggedIn
 
+// two identities on one Claude account bill the same Max plan — the split is silently gone
+export const sharedAccount = (config: Config | null, of: (dir: string) => { uuid: string | null; email: string | null } = account): DoctorCheck | null => {
+  const byUuid = Object.entries(config?.identities ?? {}).reduce<Record<string, { email: string | null; ids: string[] }>>((memo, [id, identity]) => {
+    if (!identity.claude_config_dir) return memo
+    const a = of(identity.claude_config_dir)
+    if (!a.uuid) return memo
+    memo[a.uuid] = { email: a.email, ids: [...(memo[a.uuid]?.ids ?? []), id] }
+    return memo
+  }, {})
+  const dup = Object.values(byUuid).find((v) => v.ids.length > 1)
+  if (!dup) return null
+  return { level: 'fail', text: `${dup.ids.join(' + ')} share one Claude account (${dup.email ?? 'same login'}) — usage bills one Max plan; log the wrong one out and back in with the right account` }
+}
+
 // keyring names read as "keychain"; env:/file: refs print as themselves
 const label = (ref: string): string => keychain.kind(ref) === 'keyring' ? `keychain "${ref}"` : ref
 
@@ -351,6 +365,9 @@ export const diagnose = async (
     const url = baseUrl(config, settings.read, id, identity)
     if (url) results.push(url)
   }
+
+  const shared = sharedAccount(config)
+  if (shared) results.push(shared)
 
   const rtk = rtkCheck(config, pathEnv)
   if (rtk) results.push(rtk)
