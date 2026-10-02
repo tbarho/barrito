@@ -276,6 +276,31 @@ export const plan = (detected: Detected, answers: Answers): Action[] => {
       remove,
     })
   }
+  // independent of legacy: any installed harness without a shim in the shims dir gets one
+  // (a fresh machine, or init after uninstall). An existing unmarked file is a legacy shim,
+  // owned by the replace flow above, never overwritten here.
+  // declining the legacy replacement (replace: false) leaves the shims dir alone
+  if (!actions.some((a) => a.kind === 'shims') && (answers.replace || legacy.shims.length === 0)) {
+    const missing = detected.agents.map((a) => a.name).filter((n) => {
+      const bin = byName[n]?.bin
+      if (!bin) return false
+      const file = path.join(paths.shims, bin)
+      try {
+        fs.lstatSync(file)
+      } catch {
+        return true
+      }
+      return false
+    })
+    if (missing.length) {
+      actions.push({
+        kind: 'shims',
+        description: `generate shims in ${short(paths.shims)} (${missing.join(', ')})`,
+        names: missing,
+        remove: [],
+      })
+    }
+  }
   if (replace && legacy.envrcLinks.length) {
     actions.push({
       kind: 'envrc',

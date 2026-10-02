@@ -148,7 +148,7 @@ ASCII only (tmux-safe): parts are " | "-separated, a reroute shows as
 "Opus 5.5 > GLM 5.3", no emoji or box glyphs ever.
 
   barrito statusline --append their-statusline`,
-  uninstall: `usage: barrito uninstall [--restore] [--yes]
+  uninstall: `usage: barrito uninstall [--restore [--from <ts>]] [--list-backups] [--yes]
 
 Remove the service, shims and settings fragments. --restore puts the backed-up
 setup back instead of leaving a bare machine — files, launchd, and every keychain

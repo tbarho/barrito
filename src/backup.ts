@@ -167,10 +167,43 @@ export const restore = (
   return manifest
 }
 
-// newest backup's manifest, for `barrito uninstall --restore`
-export const latest = (dir: string = paths.backup, fs: typeof fsx = fsx): string | null => {
-  if (!fs.existsSync(dir)) return null
-  const ts = fs.readdirSync(dir).sort().at(-1)
-  const manifest = ts ? path.join(dir, ts, 'manifest.json') : null
-  return manifest && fs.existsSync(manifest) ? manifest : null
+export interface Listed {
+  ts: string
+  manifest: string
+  created: string
+  summary: string
+  entries: number
+}
+
+const summarize = (m: BackupManifest): string => {
+  const parts = [
+    m.files.length && `${m.files.length} file(s)`,
+    m.launchd.length && `${m.launchd.length} launchd`,
+    m.keychain.length && `${m.keychain.length} keychain`,
+  ].filter(Boolean)
+  return parts.length ? parts.join(', ') : 'nothing to restore'
+}
+
+// valid backups only (dir holds a manifest the parser accepts), newest first by the
+// manifest's `created`, dir mtime as fallback; foreign dirs and corrupt manifests are ignored
+export const list = (dir: string = paths.backup, fs: typeof fsx = fsx): Listed[] => {
+  if (!fs.existsSync(dir)) return []
+  return fs.readdirSync(dir).reduce<(Listed & { at: number })[]>((memo, ts) => {
+    const manifest = path.join(dir, ts, 'manifest.json')
+    try {
+      const m = parse(manifest, fs)
+      const at = Date.parse(m.created) || fs.statSync(path.join(dir, ts)).mtimeMs
+      const entries = m.files.length + m.launchd.length + m.keychain.length
+      memo.push({ ts, manifest, created: m.created || new Date(at).toISOString(), summary: summarize(m), entries, at })
+    } catch {}
+    return memo
+  }, []).sort((a, b) => b.at - a.at || b.ts.localeCompare(a.ts))
+}
+
+// manifest for `barrito uninstall --restore`: `from` (a backup dir name) wins, else the
+// newest backup that has at least one file/launchd/keychain entry
+export const latest = (dir: string = paths.backup, fs: typeof fsx = fsx, from?: string): string | null => {
+  const all = list(dir, fs)
+  if (from) return all.find((b) => b.ts === from)?.manifest ?? null
+  return all.find((b) => b.entries > 0)?.manifest ?? null
 }

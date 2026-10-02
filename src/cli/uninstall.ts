@@ -5,7 +5,7 @@ import path from 'node:path'
 import { paths, home, platform } from '../paths.ts'
 import * as service from '../service/index.ts'
 import * as settings from '../settings.ts'
-import { restore, latest } from '../backup.ts'
+import { restore, latest, list } from '../backup.ts'
 import * as keychain from '../keychain/index.ts'
 import { unwrapStatusline, short, stripRcBlock } from '../migrate.ts'
 import { marker, rcOf } from '../detect.ts'
@@ -44,12 +44,20 @@ const cleanSettings = (identity: Identity, config: Loose, ui: Ui): void => {
 }
 
 export default async (argv: string[], ctx: Ctx & { io?: { exec?: Exec } }): Promise<void> => {
-  const { values } = parseArgs({ args: argv, options: { restore: { type: 'boolean' }, yes: { type: 'boolean' } } })
+  const { values } = parseArgs({ args: argv, options: { restore: { type: 'boolean' }, yes: { type: 'boolean' }, from: { type: 'string' }, 'list-backups': { type: 'boolean' } } })
   const deps = { exec: (bin: string, args: string[]): string => execFileSync(bin, args, { encoding: 'utf8' }), ...ctx.io }
   const config: Config | Loose = ctx.config ?? {}
 
   const ui = create({ print: ctx.print })
   ui.intro('barrito uninstall')
+  if (values['list-backups']) {
+    const all = list(paths.backup, fs)
+    ui.section('Backups')
+    if (!all.length) ui.warn('no backups found')
+    all.forEach((b) => ui.item(ui.c.dim('-'), `${b.ts}  ${b.created}  ${b.summary}`))
+    ui.outro(all.length ? 'restore one with barrito uninstall --restore --from <ts>' : 'nothing to restore')
+    return
+  }
   if (!values.yes) {
     const message = values.restore
       ? 'remove barrito and put the backed-up setup back?'
@@ -80,9 +88,10 @@ export default async (argv: string[], ctx: Ctx & { io?: { exec?: Exec } }): Prom
     const ownedRefs = [...new Set(Object.values(config.identities ?? {}).flatMap((i) => Object.values(i.keychain ?? {})))]
       .filter((ref): ref is string => typeof ref === 'string' && keychain.kind(ref) === 'keyring' && keychain.owned(ref))
     ui.section('Restore')
-    const manifest = latest(paths.backup, fs)
+    list(paths.backup, fs).forEach((b) => ui.item(ui.c.dim('-'), `${b.ts}  ${b.created}  ${b.summary}`))
+    const manifest = latest(paths.backup, fs, values.from)
     if (!manifest) {
-      ui.warn('no backup manifest found')
+      ui.warn(values.from ? `no valid backup ${values.from}` : 'no backup with anything to restore')
       ui.outro(ui.c.red('nothing to restore'))
       return ctx.exit(1)
     }

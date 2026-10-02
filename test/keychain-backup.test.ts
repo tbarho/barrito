@@ -5,6 +5,7 @@ import path from 'node:path'
 import { tmpdir } from 'node:os'
 import * as kc from '../src/keychain/index.ts'
 import { create, restore } from '../src/backup.ts'
+import { paths } from '../src/paths.ts'
 import command from '../src/cli/keychain.ts'
 import { diagnose } from '../src/cli/doctor.ts'
 import uninstall from '../src/cli/uninstall.ts'
@@ -304,4 +305,26 @@ test('uninstall --restore: overwritten keychain item comes back and is not delet
   assert.equal(store['barrito: gateway personal'], undefined, 'other owned copies still go')
   assert.match(printed.join('\n'), /restored keychain "barrito: gateway work"/)
   assert.equal(printed.join('\n').includes('pre-barrito'), false)
+})
+
+test('uninstall --list-backups prints valid backups only; --from picks one', async () => {
+  const dir = paths.backup
+  const old = create({ ts: '2026-10-01T1000', dir, now: new Date('2026-10-01T10:00:00Z') })
+  fs.writeFileSync(path.join(home, 'o.txt'), 'orig')
+  old.save(path.join(home, 'o.txt'))
+  old.write()
+  create({ ts: '2026-10-02T0900', dir, now: new Date('2026-10-02T09:00:00Z') }).write()
+  fs.mkdirSync(path.join(dir, 'pencil-20261002-1323'), { recursive: true })
+  const printed: string[] = []
+  const ctx = (io = {}) => ({ config: { port: 4141, identities: {} } as unknown as Config, print: (s: string) => printed.push(s), exit: () => undefined as never, io })
+  await uninstall(['--list-backups'], ctx())
+  const text = printed.join('\n')
+  assert.match(text, /2026-10-02T0900 .*nothing to restore/)
+  assert.match(text, /2026-10-01T1000 .*1 file\(s\)/)
+  assert.ok(text.indexOf('2026-10-02T0900') < text.indexOf('2026-10-01T1000'))
+  assert.doesNotMatch(text, /pencil/)
+
+  fs.rmSync(path.join(home, 'o.txt'))
+  await uninstall(['--restore', '--yes', '--from', '2026-10-01T1000'], ctx({ exec: () => '' }))
+  assert.equal(fs.readFileSync(path.join(home, 'o.txt'), 'utf8'), 'orig')
 })

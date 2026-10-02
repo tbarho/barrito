@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { env } from './fixtures/home/_copy.ts'
-import { create, restore, latest } from '../src/backup.ts'
+import { create, restore, latest, list } from '../src/backup.ts'
 
 const KEYS = ['BARRITO_HOME', 'BARRITO_CONFIG', 'BARRITO_STATE', 'BARRITO_LOG', 'BARRITO_SHIMS']
 let prev: Record<string, string | undefined>, home: string
@@ -121,4 +121,45 @@ test('latest: newest backup manifest, null when none', () => {
   two.save(files.plist)
   two.write()
   assert.equal(latest(), two.write())
+})
+
+const mk = (dir: string, ts: string, created: string, files: number) => {
+  const b = create({ ts, dir, now: new Date(created) })
+  const f = path.join(home, `f-${ts}`)
+  fs.writeFileSync(f, 'x')
+  Array.from({ length: files }).forEach(() => b.save(f))
+  return b.write()
+}
+
+test('latest/list: foreign dirs, stray files and corrupt manifests are ignored', () => {
+  const dir = path.join(home, 'bk')
+  const real = mk(dir, '2026-10-02T1743', '2026-10-02T17:43:00Z', 1)
+  fs.mkdirSync(path.join(dir, 'pencil-20261002-1323'), { recursive: true }) // sorts after "2026-…", no manifest
+  fs.mkdirSync(path.join(dir, 'zz-bad'), { recursive: true })
+  fs.writeFileSync(path.join(dir, 'zz-bad', 'manifest.json'), '{nope')
+  fs.writeFileSync(path.join(dir, 'zz-file'), 'x')
+  assert.equal(latest(dir), real)
+  assert.deepEqual(list(dir).map((b) => b.ts), ['2026-10-02T1743'])
+})
+
+test('latest: empty manifests skipped, newest with entries chosen; --from overrides', () => {
+  const dir = path.join(home, 'bk')
+  const old = mk(dir, '2026-10-01T1000', '2026-10-01T10:00:00Z', 2)
+  mk(dir, '2026-10-02T0900', '2026-10-02T09:00:00Z', 0) // re-run after uninstall: nothing to back up
+  const mid = mk(dir, '2026-10-01T1500', '2026-10-01T15:00:00Z', 1)
+  assert.equal(latest(dir), mid)
+  assert.equal(latest(dir, fs, '2026-10-01T1000'), old)
+  assert.equal(latest(dir, fs, '2026-10-02T0900'), path.join(dir, '2026-10-02T0900', 'manifest.json')) // explicit wins even if empty
+  assert.equal(latest(dir, fs, 'nope'), null)
+})
+
+test('list: newest first by created, with one-line summaries', () => {
+  const dir = path.join(home, 'bk')
+  mk(dir, 'a-old', '2026-10-01T10:00:00Z', 2)
+  mk(dir, 'b-new', '2026-10-02T09:00:00Z', 0)
+  const all = list(dir)
+  assert.deepEqual(all.map((b) => b.ts), ['b-new', 'a-old'])
+  assert.equal(all[0]!.created, '2026-10-02T09:00:00.000Z')
+  assert.equal(all[0]!.summary, 'nothing to restore')
+  assert.equal(all[1]!.summary, '2 file(s)')
 })

@@ -184,7 +184,7 @@ Every command answers `--help` before doing anything. The CLI also answers `--ve
 | `barrito stop` | Stop a detached router (pidfile). A service-managed router is not ours to kill — this says how to stop it instead. |
 | `barrito ci [--identity …] [--gateway-key env:…] [--fallback …] [--port …] [--config <file>]` / `barrito ci stop` | GitHub Actions setup/teardown. `ci` writes shims + router env, starts the router detached and waits for `/health`; `stop` writes the step summary and tears down. See below. |
 | `barrito statusline [--append <command>]` | Claude Code statusline hook: identity, tier, Max usage, API spend and reset in one line. Never throws; `--append` runs another statusline first. |
-| `barrito uninstall [--restore] [--yes]` | Remove the service, shims and settings fragments; `--restore` puts the backed-up setup back. |
+| `barrito uninstall [--restore [--from <ts>]] [--list-backups] [--yes]` | Remove the service, shims and settings fragments; `--restore` puts the newest backup that has entries back (`--from <ts>` picks one, `--list-backups` lists them). |
 | `/barrito [status\|pin <model>\|unpin\|rtk on\|off\|caveman <level>]` | Slash command inside Claude Code, scoped to the session's identity (`$BARRITO_IDENTITY`) — also toggles token savers: `/barrito caveman ultra`, `/barrito rtk off`. |
 
 ## Platforms
