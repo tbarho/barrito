@@ -259,7 +259,7 @@ test('file: overwrite leaves a 0600 sibling backup, retention prunes, restore pu
 
   ;['2026-09-01T00:00:00', '2026-09-02T00:00:00', '2026-09-03T00:00:00'].forEach((ts) => fs.writeFileSync(`${file}.barrito-bak-${ts}`, ts, { mode: 0o600 }))
   kc.set(ref, 'newer', { now })
-  assert.deepEqual(kc.backups({ files: [ref] }).map((b) => b.ts), ['2026-10-02T15:00:00', TS, '2026-09-03T00:00:00'])
+  assert.deepEqual(kc.backups({ files: [ref], exec: () => '' }).map((b) => b.ts), ['2026-10-02T15:00:00', TS, '2026-09-03T00:00:00'])
 
   assert.equal(kc.restore(ref, { from: TS, now })?.ts, TS)
   assert.equal(fs.readFileSync(file, 'utf8'), 'old-secret')
