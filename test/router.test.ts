@@ -1270,3 +1270,66 @@ test('GET /status carries transforms state, saved-today stats and rtk availabili
     await r.stop()
   }
 })
+
+test('a socket dropped before any response is retried once on a fresh connection, invisibly', async () => {
+  let n = 0
+  const cap = capture((e) => {
+    n += 1
+    if (n === 1) { e.req.socket.destroy(); return }
+    ok(e, '{"ok":true}')
+  })
+  const r = await boot({ handler: cap.handler, tiers: fakeTiers({ route: { to: 'direct' } }) })
+  try {
+    const res = await call(r.port, '/v1/messages', {
+      body: JSON.stringify({ model: 'claude-sonnet-4.5', max_tokens: 8 }),
+      headers: claudeHeaders,
+    })
+    assert.equal(res.status, 200)
+    assert.equal(n, 2)
+    assert.equal(r.logs.length, 1)
+    assert.match(r.logs[0] ?? '', / → direct \(-\) 200 /)
+  } finally {
+    await r.stop()
+  }
+})
+
+test('a connection failing twice logs its error code on the retried hop', async () => {
+  const tiers = fakeTiers({
+    route: { to: 'direct' },
+    retries: [{ retry: { to: 'gateway', model: 'zai/glm-5.3', reason: 'outage' } }],
+  })
+  const cap = capture((e) => {
+    if (e.url?.startsWith('/claude-code')) return ok(e, '{"ok":true}')
+    e.req.socket.destroy()
+  })
+  const r = await boot({ handler: cap.handler, tiers })
+  try {
+    const res = await call(r.port, '/v1/messages', {
+      body: JSON.stringify({ model: 'claude-sonnet-4.5', max_tokens: 8 }),
+      headers: claudeHeaders,
+    })
+    assert.equal(res.status, 200)
+    assert.match(r.logs[0] ?? '', /→ direct 0 \(retry\) \[[A-Z_]+: .+\]$/)
+  } finally {
+    await r.stop()
+  }
+})
+
+test('an error response reaching the client logs its upstream type and message', async () => {
+  const cap = capture((e) => {
+    e.res.writeHead(400, { 'content-type': 'application/json' })
+    e.res.end('{"type":"error","error":{"type":"invalid_request_error","message":"bad thing"}}')
+  })
+  const r = await boot({ handler: cap.handler, tiers: fakeTiers({ route: { to: 'direct' } }) })
+  try {
+    const res = await call(r.port, '/v1/messages', {
+      body: JSON.stringify({ model: 'claude-sonnet-4.5', max_tokens: 8 }),
+      headers: claudeHeaders,
+    })
+    assert.equal(res.status, 400)
+    assert.equal((await res.json() as { error: { message: string } }).error.message, 'bad thing')
+    assert.ok(r.logs.some((l) => / → direct 400 \[invalid_request_error: bad thing\]$/.test(l)), r.logs.join('\n'))
+  } finally {
+    await r.stop()
+  }
+})

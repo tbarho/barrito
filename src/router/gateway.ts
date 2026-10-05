@@ -31,7 +31,12 @@ export const send = async (
     redirect: 'manual' as const,
     signal,
   }
-  const up = await fetch(url, opts)
+  // a socket dropped before any response (an idle keep-alive closed under us) gets one
+  // immediate retry on a fresh connection — the same retry Anthropic's own SDK makes
+  const up = await fetch(url, opts).catch((err: unknown) => {
+    if (signal?.aborted) throw err
+    return fetch(url, opts)
+  })
   if (up.status !== 401) return up
   keys.bust(identity)
   const fresh = keys.get(identity)

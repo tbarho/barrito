@@ -21,15 +21,34 @@ const dir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'barrito-tiers-'))
 const setup = ({ cfg = config, start = 0 }: { cfg?: TiersConfig; start?: number } = {}) => {
   const notes: { title: string; message: string; group?: string }[] = []
   let t = start
+  let timers: { due: number; fn: () => void }[] = []
   const tiers = create({
     config: cfg,
     statePath: dir(),
     notify: (title, message, group) => notes.push({ title, message, group }),
     now: () => t,
+    later: (ms, fn) => { timers.push({ due: t + ms, fn }) },
   })
-  const tick = (ms: number) => { t += ms }
-  const at = (ms: number) => { t = ms }
+  const fire = () => {
+    const due = timers.filter((x) => x.due <= t)
+    timers = timers.filter((x) => x.due > t)
+    due.forEach((x) => x.fn())
+  }
+  const tick = (ms: number) => { t += ms; fire() }
+  const at = (ms: number) => { t = ms; fire() }
   return { tiers, notes, tick, at }
+}
+
+const fail = (tiers: ReturnType<typeof setup>['tiers'], id = 'personal', status = 529) =>
+  tiers.observe(id, { to: 'direct', model: 'claude-sonnet-5', status, headers: {} })
+
+// a streak long enough to trip: 3 failures, the last 20s after the first
+const trip = (s: ReturnType<typeof setup>, id = 'personal') => {
+  fail(s.tiers, id)
+  s.tick(10_000)
+  fail(s.tiers, id)
+  s.tick(10_000)
+  return fail(s.tiers, id)
 }
 
 test('quota 429 retries first chain entry and notifies once', () => {
@@ -242,11 +261,11 @@ test('confirmed 429 still falls back (utilization ≥ 1 on the claimed window)',
   assert.equal(notes.length, 1)
 })
 
-test('an unconfirmed 429 does not consume the free direct retry a later 5xx earns', () => {
+test('an unconfirmed 429 does not start a failure streak', () => {
   const { tiers, notes } = setup()
   tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: {} })
   const outage = tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 503, headers: {} })
-  assert.deepEqual(outage, { retry: { to: 'direct', delay: 0 } })
+  assert.deepEqual(outage, { retry: { to: 'direct', delay: 1000 } })
   assert.equal(tiers.snapshot().personal?.tier, 'max')
   assert.equal(notes.length, 0)
 })
@@ -267,77 +286,112 @@ test('persisted retired throttle fallback loads as max', () => {
 })
 
 
-test('single direct failure retries direct once, no state change, no notify', () => {
+test('a failure below the trip line retries direct with backoff, no state change, no notify', () => {
   const { tiers, notes } = setup()
-  const r = tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 503, headers: {} })
-  assert.deepEqual(r, { retry: { to: 'direct', delay: 0 } })
+  assert.deepEqual(fail(tiers, 'personal', 503), { retry: { to: 'direct', delay: 1000 } })
+  assert.deepEqual(fail(tiers, 'personal', 0), { retry: { to: 'direct', delay: 2000 } })
+  assert.deepEqual(fail(tiers), { retry: { to: 'direct', delay: 4000 } }) // 3 fails but 0s span — no trip
   assert.equal(tiers.snapshot().personal?.tier, 'max')
   assert.deepEqual(tiers.route('personal', 'claude-sonnet-5'), { to: 'direct' })
   assert.equal(notes.length, 0)
 })
 
-test('two consecutive direct failures enter outage and notify once', () => {
-  const { tiers, notes, tick } = setup()
-  tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 529, headers: {} })
-  const r = tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 529, headers: {} })
-  assert.deepEqual(r, { retry: { to: 'gateway', model: 'zai/glm-5.3', reason: 'outage' } })
-  const snap = tiers.snapshot().personal
-  assert.equal(snap?.tier, 'fallback')
-  assert.equal(snap?.reason, 'outage')
-  assert.equal(snap?.model, 'zai/glm-5.3')
-  assert.deepEqual(tiers.route('personal', 'claude-sonnet-5'), {
-    to: 'gateway', model: 'zai/glm-5.3', reason: 'outage',
-  })
-  assert.equal(notes.length, 1)
-  assert.match(notes[0]?.message ?? '', /^personal — Anthropic unreachable\. Now GLM 5\.3 on API credits\.$/)
-  assert.equal(notes[0]?.group, 'personal')
-  tick(30_000)
-  assert.equal(tiers.route('personal', 'claude-sonnet-5').to, 'gateway')
+test('concurrent stray drops interleaved with successes never trip', () => {
+  const s = setup()
+  for (let i = 0; i < 10; i++) {
+    fail(s.tiers, 'personal', 0)
+    fail(s.tiers, 'personal', 0)
+    s.tick(5_000)
+    s.tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 200, headers: {} })
+  }
+  assert.equal(s.tiers.snapshot().personal?.tier, 'max')
+  assert.equal(s.notes.length, 0)
 })
 
-test('a direct success (even limited) between failures resets the window', () => {
-  const { tiers, notes } = setup()
-  tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 503, headers: {} })
-  const r = tiers.observe('personal', {
+test('a streak of 3+ failures over 20s with no success enters outage; notice waits 30s', () => {
+  const s = setup()
+  assert.deepEqual(trip(s), { retry: { to: 'gateway', model: 'zai/glm-5.3', reason: 'outage' } })
+  const snap = s.tiers.snapshot().personal
+  assert.equal(snap?.tier, 'fallback')
+  assert.equal(snap?.reason, 'outage')
+  assert.deepEqual(s.tiers.route('personal', 'claude-sonnet-5'), { to: 'gateway', model: 'zai/glm-5.3', reason: 'outage' })
+  assert.equal(s.notes.length, 0)
+  s.tick(14_999)
+  assert.equal(s.tiers.route('personal', 'claude-sonnet-5').to, 'gateway')
+  fail(s.tiers) // half-open isn't due yet: a stray direct observation still counts as a failed probe
+  s.tick(30_000)
+  assert.equal(s.notes.length, 1)
+  assert.match(s.notes[0]?.message ?? '', /^personal — Anthropic unreachable\. Now GLM 5\.3 on API credits\.$/)
+  assert.equal(s.notes[0]?.group, 'personal')
+})
+
+test('a stale streak (>60s since its first failure) starts over', () => {
+  const s = setup()
+  fail(s.tiers)
+  s.tick(61_000)
+  fail(s.tiers)
+  s.tick(10_000)
+  assert.deepEqual(fail(s.tiers), { retry: { to: 'direct', delay: 2000 } }) // 2nd of a fresh streak
+  assert.equal(s.tiers.snapshot().personal?.tier, 'max')
+})
+
+test('a direct success (even limited) between failures resets the streak', () => {
+  const s = setup()
+  fail(s.tiers, 'personal', 503)
+  s.tick(10_000)
+  fail(s.tiers, 'personal', 503)
+  const r = s.tiers.observe('personal', {
     to: 'direct', model: 'claude-sonnet-5', status: 200,
     headers: { 'anthropic-ratelimit-unified-5h-status': 'limited' },
   })
   assert.deepEqual(r, { retry: null })
-  assert.deepEqual(tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 503, headers: {} }), { retry: { to: 'direct', delay: 0 } })
-  assert.equal(tiers.snapshot().personal?.tier, 'max')
-  assert.equal(notes.length, 0)
+  s.tick(10_000)
+  assert.deepEqual(fail(s.tiers, 'personal', 503), { retry: { to: 'direct', delay: 1000 } })
+  assert.equal(s.tiers.snapshot().personal?.tier, 'max')
+  assert.equal(s.notes.length, 0)
 })
 
-test('half-open after 60s: probe direct, success returns to max', () => {
-  const { tiers, notes, tick } = setup()
-  tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 529, headers: {} })
-  tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 529, headers: {} })
-  tick(59_999)
-  assert.equal(tiers.route('personal', 'claude-sonnet-5').to, 'gateway')
-  tick(1)
-  assert.deepEqual(tiers.route('personal', 'claude-sonnet-5'), { to: 'direct' })
-  assert.deepEqual(tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 200, headers: {} }), { retry: null })
-  assert.equal(tiers.snapshot().personal?.tier, 'max')
-  assert.equal(notes.length, 2)
+test('an outage that heals at the first probe (15s) is never announced', () => {
+  const s = setup()
+  trip(s)
+  s.tick(15_000)
+  assert.deepEqual(s.tiers.route('personal', 'claude-sonnet-5'), { to: 'direct' })
+  assert.deepEqual(s.tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 200, headers: {} }), { retry: null })
+  assert.equal(s.tiers.snapshot().personal?.tier, 'max')
+  s.tick(60_000)
+  assert.equal(s.notes.length, 0)
 })
 
-test('failed probe backs off ×2 capped at 15m', () => {
-  const { tiers, at } = setup()
-  at(1000)
-  tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 529, headers: {} })
-  tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 529, headers: {} })
-  let halfOpen = 1000 + 60_000
-  const gaps = [120_000, 240_000, 480_000, 900_000, 900_000]
+test('an announced outage announces its recovery', () => {
+  const s = setup()
+  trip(s)
+  s.tick(15_000)
+  fail(s.tiers) // probe fails → next probe in 30s
+  s.tick(15_000) // 30s since entering → notice
+  assert.equal(s.notes.length, 1)
+  s.tick(15_000)
+  assert.deepEqual(s.tiers.route('personal', 'claude-sonnet-5'), { to: 'direct' })
+  s.tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 200, headers: {} })
+  assert.equal(s.notes.length, 2)
+  assert.match(s.notes[1]?.message ?? '', /^personal — Max is back\.$/)
+})
+
+test('failed probe backs off ×2 from 15s, capped at 15m', () => {
+  const s = setup()
+  s.at(1000)
+  trip(s)
+  let halfOpen = 1000 + 20_000 + 15_000
+  const gaps = [30_000, 60_000, 120_000, 240_000, 480_000, 900_000, 900_000]
   for (const gap of gaps) {
-    at(halfOpen)
-    assert.equal(tiers.route('personal', 'claude-sonnet-5').to, 'direct')
-    tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 529, headers: {} })
+    s.at(halfOpen)
+    assert.equal(s.tiers.route('personal', 'claude-sonnet-5').to, 'direct')
+    fail(s.tiers)
     halfOpen = halfOpen + gap
-    at(halfOpen - 1)
-    assert.equal(tiers.route('personal', 'claude-sonnet-5').to, 'gateway')
+    s.at(halfOpen - 1)
+    assert.equal(s.tiers.route('personal', 'claude-sonnet-5').to, 'gateway')
   }
-  at(halfOpen)
-  assert.equal(tiers.route('personal', 'claude-sonnet-5').to, 'direct')
+  s.at(halfOpen)
+  assert.equal(s.tiers.route('personal', 'claude-sonnet-5').to, 'direct')
 })
 
 test('chain walk: failed hop → next entry, exhaustion → null, then fresh walk', () => {
@@ -357,15 +411,13 @@ test('chain walk: failed hop → next entry, exhaustion → null, then fresh wal
 })
 
 test('half-open probe failure resumes the chain where it left off', () => {
-  const { tiers, at } = setup()
-  at(1000)
-  tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 529, headers: {} })
-  tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 529, headers: {} })
-  tiers.observe('personal', { to: 'gateway', model: 'zai/glm-5.3', status: 500, headers: {} })
-  at(1000 + 60_000)
-  assert.equal(tiers.route('personal', 'claude-sonnet-5').to, 'direct')
-  const r = tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 529, headers: {} })
-  assert.deepEqual(r, { retry: { to: 'gateway', model: 'deepseek/deepseek-v4.1-flash', reason: 'outage' } })
+  const s = setup()
+  s.at(1000)
+  trip(s)
+  s.tiers.observe('personal', { to: 'gateway', model: 'zai/glm-5.3', status: 500, headers: {} })
+  s.at(1000 + 20_000 + 15_000)
+  assert.equal(s.tiers.route('personal', 'claude-sonnet-5').to, 'direct')
+  assert.deepEqual(fail(s.tiers), { retry: { to: 'gateway', model: 'deepseek/deepseek-v4.1-flash', reason: 'outage' } })
 })
 
 test('chain membership ignores [1m] suffixes; returned models stay raw', () => {
@@ -402,14 +454,14 @@ test('stale persisted model (chain changed) falls back to the head on route', ()
   })
 })
 
-test('empty chain: a header-less 429 surfaces; outage surfaces after its free retry', () => {
-  const { tiers, notes } = setup()
-  assert.deepEqual(tiers.observe('none', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: {} }), { retry: null })
-  assert.equal(tiers.snapshot().none?.tier, 'max')
-  assert.deepEqual(tiers.observe('none', { to: 'direct', model: 'claude-sonnet-5', status: 529, headers: {} }), { retry: { to: 'direct', delay: 0 } })
-  assert.deepEqual(tiers.observe('none', { to: 'direct', model: 'claude-sonnet-5', status: 529, headers: {} }), { retry: null })
-  assert.equal(tiers.snapshot().none?.tier, 'max')
-  assert.equal(notes.length, 0)
+test('empty chain: a header-less 429 surfaces; a tripped outage surfaces', () => {
+  const s = setup()
+  assert.deepEqual(s.tiers.observe('none', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: {} }), { retry: null })
+  assert.equal(s.tiers.snapshot().none?.tier, 'max')
+  assert.deepEqual(trip(s, 'none'), { retry: null })
+  assert.equal(s.tiers.snapshot().none?.tier, 'max')
+  s.tick(60_000)
+  assert.equal(s.notes.length, 0)
 })
 
 test('successful gateway hop needs no retry', () => {
@@ -422,13 +474,13 @@ test('gateway hop failure outside a fallback tier surfaces (no silent credits)',
   assert.deepEqual(tiers.observe('personal', { to: 'gateway', model: 'zai/glm-5.3', status: 429, headers: {} }), { retry: null })
 })
 
-test('pin max: a header-less 429 surfaces; outage gets one free direct retry', () => {
-  const { tiers, notes } = setup()
+test('pin max: a header-less 429 surfaces; a tripped outage surfaces', () => {
+  const s = setup()
+  const { tiers, notes } = s
   tiers.pin('personal', 'max')
   assert.deepEqual(tiers.route('personal', 'claude-sonnet-5'), { to: 'direct' })
   assert.deepEqual(tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 429, headers: {} }), { retry: null })
-  assert.deepEqual(tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 529, headers: {} }), { retry: { to: 'direct', delay: 0 } })
-  assert.deepEqual(tiers.observe('personal', { to: 'direct', model: 'claude-sonnet-5', status: 529, headers: {} }), { retry: null })
+  assert.deepEqual(trip(s), { retry: null })
   const snap = tiers.snapshot().personal
   assert.equal(snap?.tier, 'pinned')
   assert.equal(snap?.reason, 'pinned')

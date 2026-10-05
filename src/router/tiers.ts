@@ -7,15 +7,22 @@ import type {
 const HOUR = 3600e3
 const WINDOW = 60e3
 const MAX_BACKOFF = 15 * 60e3
+// outage = a failure streak with no direct success in between: ≥3 failures spanning ≥20s.
+// concurrent sessions interleave stray socket drops with successes — those never trip it
+const TRIP_FAILS = 3
+const TRIP_SPAN = 20e3
+const PROBE = 15e3 // first half-open probe; ×2 per failed probe up to MAX_BACKOFF
+const QUIET = 30e3 // an outage that heals before this is never announced
 
 type Headers = Record<string, string | null | undefined>
 // Observation accepts omitted model/headers on direct hops (server always sends both)
 type Obs = Omit<Observation, 'headers' | 'model'> & { model?: string; headers?: Record<string, string> }
 type Verdict = { retry: Retry | null }
 
-// outageRetry: the one free direct retry a first 5xx/connect failure earns.
+// failAt/fails: the current direct failure streak (any direct success clears it).
+// noticed: an "out" notice went out, so the recovery is announced too.
 // t429Day/t429: unconfirmed 429s passed through to Claude Code today (local day)
-type State = Omit<TierState, 'retryDirect'> & { outageRetry: boolean; t429Day: string | null; t429: number }
+type State = Omit<TierState, 'retryDirect'> & { fails: number; noticed: boolean; t429Day: string | null; t429: number }
 
 const pad = (n: number) => String(n).padStart(2, '0')
 const hhmm = (t: number) => {
@@ -100,19 +107,20 @@ const ok = (status: number): boolean => status >= 200 && status < 300
 const bare = (id: string | null | undefined): string => String(id).replace(/\[[^\]]*\]$/i, '').toLowerCase()
 
 export const create = ({
-  config, statePath, notify, now = Date.now,
+  config, statePath, notify, now = Date.now, later = (ms, fn) => { setTimeout(fn, ms).unref() },
 }: {
   config?: TiersConfig | null
   statePath: string
   notify?: Notify
   now?: Clock
+  later?: (ms: number, fn: () => void) => void
 }): Tiers => {
   const file = path.join(statePath, 'tiers.json')
 
   const blank = (): State => ({
     tier: 'max', reason: null, model: null, since: null,
     resetAt: null, util5h: null, util7d: null, pin: null,
-    halfOpenAt: null, backoff: null, failAt: null, outageRetry: false, t429Day: null, t429: 0,
+    halfOpenAt: null, backoff: null, failAt: null, fails: 0, noticed: false, t429Day: null, t429: 0,
   })
 
   const load = (): Record<string, State> => {
@@ -157,9 +165,11 @@ export const create = ({
     s.halfOpenAt = null
     s.backoff = null
     s.failAt = null
-    s.outageRetry = false
+    s.fails = 0
+    const noticed = s.noticed
+    s.noticed = false
     save()
-    say(id, `${id} — Max is back.`)
+    if (noticed) say(id, `${id} — Max is back.`)
   }
 
   // unconfirmed 429 → no tier change, no notice: forwarded verbatim, only counted
@@ -182,8 +192,9 @@ export const create = ({
     const resetAt = quotaReset(h, now)
     s.resetAt = resetAt
     s.failAt = null
-    s.outageRetry = false
+    s.fails = 0
     if (!was) s.since = now() // since marks entering a state, not repeats
+    if (!was) s.noticed = true
     save()
     if (!was) say(id, `${id} — Max spent. Now ${label(config, head)} on API credits until ${hhmm(resetAt)}.`)
     return { retry: { to: 'gateway', model: head, reason: 'quota' } }
@@ -192,23 +203,22 @@ export const create = ({
   const outage = (id: string, s: State, ch: string[]): Verdict => {
     const t = now()
     if (s.tier === 'fallback' && s.reason === 'outage') {
-      const backoff = Math.min((s.backoff ?? WINDOW) * 2, MAX_BACKOFF)
+      const backoff = Math.min((s.backoff ?? PROBE) * 2, MAX_BACKOFF)
       s.backoff = backoff
       s.halfOpenAt = t + backoff
       save()
       const model = s.model ?? ch[0] // failed half-open probe resumes the chain where it left off
       return model ? { retry: { to: 'gateway', model, reason: 'outage' } } : { retry: null }
     }
-    if (!s.outageRetry && !(s.failAt !== null && t - s.failAt <= WINDOW)) {
-      // first failure: one free direct retry, no tier change
-      s.failAt = t
-      s.outageRetry = true
+    if (s.failAt === null || t - s.failAt > WINDOW) { s.failAt = t; s.fails = 0 } // stale streak starts over
+    s.fails += 1
+    if (s.fails < TRIP_FAILS || t - s.failAt < TRIP_SPAN) {
       save()
-      return { retry: { to: 'direct', delay: 0 } }
+      return { retry: { to: 'direct', delay: Math.min(1000 * 2 ** (s.fails - 1), 8000) } }
     }
+    s.failAt = null
+    s.fails = 0
     if (!ch.length || s.pin === 'max') {
-      s.failAt = null
-      s.outageRetry = false
       save()
       return { retry: null }
     }
@@ -218,12 +228,16 @@ export const create = ({
     s.model = head
     s.since = t
     s.resetAt = null
-    s.backoff = WINDOW
-    s.halfOpenAt = t + WINDOW
-    s.failAt = null
-    s.outageRetry = false
+    s.backoff = PROBE
+    s.halfOpenAt = t + PROBE
     save()
-    say(id, `${id} — Anthropic unreachable. Now ${label(config, head)} on API credits.`)
+    later(QUIET, () => {
+      const cur = st(id)
+      if (cur.tier !== 'fallback' || cur.reason !== 'outage' || cur.since !== t) return // healed quietly
+      cur.noticed = true
+      save()
+      say(id, `${id} — Anthropic unreachable. Now ${label(config, cur.model ?? head)} on API credits.`)
+    })
     return { retry: { to: 'gateway', model: head, reason: 'outage' } }
   }
 
@@ -245,7 +259,7 @@ export const create = ({
       }, false)
     const reset = resetFrom(h)
     if (reset !== null && s.resetAt !== reset) { s.resetAt = reset; dirty = true }
-    if (s.failAt !== null || s.outageRetry) { s.failAt = null; s.outageRetry = false; dirty = true }
+    if (s.failAt !== null || s.fails) { s.failAt = null; s.fails = 0; dirty = true }
     if (dirty) save()
     // quota keeps its window; a limited-status 2xx only refreshes it (it answered)
     if (limited(h)) return quietQuota(s, h)

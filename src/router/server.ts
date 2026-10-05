@@ -51,6 +51,12 @@ const labels = (to: 'direct' | 'gateway', model: string | undefined, parsed: Par
 
 // a retried hop's body is discarded anyway; surface the upstream error type/message (never request content)
 const why = async (a: Attempt): Promise<string> => {
+  if (a.error) {
+    const cause = (a.error as { cause?: { code?: unknown; message?: unknown } }).cause
+    const code = typeof cause?.code === 'string' ? cause.code : a.error.name
+    const msg = typeof cause?.message === 'string' ? cause.message : a.error.message
+    return ` [${code}: ${msg.replace(/\s+/g, ' ').slice(0, 200)}]`
+  }
   if (!a.up) return ''
   try {
     const text = (await a.up.text()).slice(0, 2048)
@@ -200,9 +206,11 @@ const claude = async (req: IncomingMessage, res: ServerResponse, ctx: ServeCtx):
   }
 
   const { ask, price } = labels(to, model, parsed)
-  // a direct 429 reaching the client is passed through for Claude Code's own backoff — keep it greppable
-  if (kind === 'tiers' && to === 'direct' && up.status === 429) {
-    log(`${new Date().toISOString()} ${id} ${req.method ?? ''} ${req.url ?? ''} ${ask} → direct 429 (passthrough)${await why({ up: up.clone() })}`)
+  // an error reaching the client keeps its upstream type/message greppable; a direct 429 is
+  // passed through for Claude Code's own backoff
+  if (kind === 'tiers' && up.status >= 400) {
+    const pass = to === 'direct' && up.status === 429 ? ' (passthrough)' : ''
+    log(`${new Date().toISOString()} ${id} ${req.method ?? ''} ${req.url ?? ''} ${ask} → ${to} ${up.status}${pass}${await why({ up: up.clone() })}`)
   }
   const sse = (up.headers.get('content-type') || '').includes('text/event-stream')
   const m = meter()
