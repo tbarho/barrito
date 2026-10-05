@@ -34,7 +34,7 @@ afterEach(() => {
 })
 
 const git = (dir: string, ...args: string[]): void => {
-  execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t.test', ...args], { stdio: 'ignore' })
+  execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t.test', '-c', 'maintenance.auto=false', '-c', 'gc.auto=0', ...args], { stdio: 'ignore' })
 }
 
 const repo = (rel: string, remote: string | null, branches: string[] = []): string => {
