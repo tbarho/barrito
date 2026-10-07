@@ -1,6 +1,7 @@
 // Shared shapes for every module. Owners may add fields; changing an existing one needs the coordinator.
 
 import type { ExecFileSyncOptions, SpawnOptions } from 'node:child_process'
+import type { Gate } from './router/gate.ts'
 import type { TransformState, Transforms } from './router/transforms.ts'
 
 // ── outside world ────────────────────────────────────────────────────────────
@@ -530,6 +531,7 @@ export interface StartOpts {
   upstreams: Upstreams
   transforms?: Transforms
   maxBody?: number
+  gate?: Gate
 }
 
 // Tiers whose snapshot may return partial entries (the router only reads what it needs);

@@ -20,6 +20,7 @@ import {
   parse,
   reply,
   rewrite,
+  jitter,
   sleep,
   tierHeader,
   transform,
@@ -27,8 +28,11 @@ import {
   transformsLog,
 } from './routes.ts'
 import { keyring, noKey, proxy, send } from './gateway.ts'
+import { create as createGate } from './gate.ts'
+import type { Gate } from './gate.ts'
 
 const NO_IDENTITY = 'barrito: no identity for this request — run barrito doctor'
+const BUSY = 'barrito: upstream busy — retry shortly'
 const MAX_HOPS = 12
 
 export interface ServeCtx {
@@ -41,6 +45,7 @@ export interface ServeCtx {
   transforms?: Transforms
   t0: number
   maxBody: number
+  gate: Gate
 }
 
 // observe sees the raw chain entry; spend and logs see the catalog id
@@ -52,8 +57,9 @@ const labels = (to: 'direct' | 'gateway', model: string | undefined, parsed: Par
 // a retried hop's body is discarded anyway; surface the upstream error type/message (never request content)
 const why = async (a: Attempt): Promise<string> => {
   if (a.error) {
-    const cause = (a.error as { cause?: { code?: unknown; message?: unknown } }).cause
-    const code = typeof cause?.code === 'string' ? cause.code : a.error.name
+    const cause = (a.error as { code?: unknown; cause?: { code?: unknown; message?: unknown } }).cause
+    const own = (a.error as { code?: unknown }).code
+    const code = typeof cause?.code === 'string' ? cause.code : typeof own === 'string' ? own : a.error.name
     const msg = typeof cause?.message === 'string' ? cause.message : a.error.message
     return ` [${code}: ${msg.replace(/\s+/g, ' ').slice(0, 200)}]`
   }
@@ -123,7 +129,7 @@ const attempt = async (
 const lower = (headers: UpstreamResponse['headers']): Record<string, string> => Object.fromEntries(headers)
 
 const claude = async (req: IncomingMessage, res: ServerResponse, ctx: ServeCtx): Promise<void> => {
-  const { config, tiers, spend, keys, log, upstreams, transforms, t0, maxBody } = ctx
+  const { config, tiers, spend, keys, log, upstreams, transforms, t0, maxBody, gate } = ctx
   const id = String(req.headers['x-barrito-identity'] || '').trim()
   const identity = config.identities[id]
   if (!identity) {
@@ -156,46 +162,58 @@ const claude = async (req: IncomingMessage, res: ServerResponse, ctx: ServeCtx):
   const t = transform(transforms, 'anthropic', id, raw)
   const applied = t.applied ?? { rtk: 0, caveman: 'off' as const, saved: 0 }
 
+  const release = await gate.acquire(id, abort.signal)
+  if (abort.signal.aborted) return
+  if (!release) {
+    fail(res, 503, 'api_error', BUSY)
+    line(log, t0, { id, method: req.method, path: req.url ?? '', model: normalize(parsed.model), to, reason, status: 503 })
+    return
+  }
+
   const hops: string[] = []
   let up: UpstreamResponse | undefined
   let last: Attempt | undefined
-  for (let n = 0; n < MAX_HOPS; n++) {
-    const a = await attempt(req, { raw: t.out, parsed: t.body ?? parsed, to, model, identity, keys, upstreams, abort })
-    last = a
-    if (abort.signal.aborted) return // no observe, no bytes — the breaker must not see client aborts
-    if (a.missing) {
-      noKey(res, id, identity)
-      line(log, t0, { id, method: req.method, path: req.url ?? '', to, reason, status: 500 })
-      return
+  try {
+    for (let n = 0; n < MAX_HOPS; n++) {
+      const a = await attempt(req, { raw: t.out, parsed: t.body ?? parsed, to, model, identity, keys, upstreams, abort })
+      last = a
+      if (abort.signal.aborted) return // no observe, no bytes — the breaker must not see client aborts
+      if (a.missing) {
+        noKey(res, id, identity)
+        line(log, t0, { id, method: req.method, path: req.url ?? '', to, reason, status: 500 })
+        return
+      }
+      const { ask } = labels(to, model, parsed)
+      hops.push(`${to}:${ask} ${a.error ? a.error.message : a.up.status}`)
+      if (kind !== 'tiers') {
+        if (a.error) break
+        up = a.up
+        break
+      }
+      const obs = tiers.observe(id, {
+        to,
+        model: ask,
+        status: a.error ? 0 : a.up.status,
+        headers: a.error ? {} : lower(a.up.headers),
+        error: a.error?.message,
+      })
+      if (!obs?.retry) {
+        if (a.error) break // connect error with no response → aggregate 502 below
+        up = a.up // chain done but upstream answered → surface that response verbatim
+        break
+      }
+      // every hop is logged, not just the final one — a silent 429 must be greppable
+      log(`${new Date().toISOString()} ${id} ${req.method ?? ''} ${req.url ?? ''} ${ask} → ${to} ${a.error ? 0 : a.up.status} (retry)${await why(a)}`)
+      to = obs.retry.to
+      model = 'model' in obs.retry ? obs.retry.model : undefined
+      reason = ('reason' in obs.retry ? obs.retry.reason : undefined) || reason
+      if ('delay' in obs.retry && obs.retry.delay) {
+        await sleep(jitter(obs.retry.delay), abort.signal)
+        if (abort.signal.aborted) return
+      }
     }
-    const { ask } = labels(to, model, parsed)
-    hops.push(`${to}:${ask} ${a.error ? a.error.message : a.up.status}`)
-    if (kind !== 'tiers') {
-      if (a.error) break
-      up = a.up
-      break
-    }
-    const obs = tiers.observe(id, {
-      to,
-      model: ask,
-      status: a.error ? 0 : a.up.status,
-      headers: a.error ? {} : lower(a.up.headers),
-      error: a.error?.message,
-    })
-    if (!obs?.retry) {
-      if (a.error) break // connect error with no response → aggregate 502 below
-      up = a.up // chain done but upstream answered → surface that response verbatim
-      break
-    }
-    // every hop is logged, not just the final one — a silent 429 must be greppable
-    log(`${new Date().toISOString()} ${id} ${req.method ?? ''} ${req.url ?? ''} ${ask} → ${to} ${a.error ? 0 : a.up.status} (retry)${await why(a)}`)
-    to = obs.retry.to
-    model = 'model' in obs.retry ? obs.retry.model : undefined
-    reason = ('reason' in obs.retry ? obs.retry.reason : undefined) || reason
-    if ('delay' in obs.retry && obs.retry.delay) {
-      await sleep(obs.retry.delay, abort.signal)
-      if (abort.signal.aborted) return
-    }
+  } finally {
+    release()
   }
   if (!up && last?.up) up = last.up
 
@@ -331,12 +349,13 @@ export const start = ({
   upstreams,
   transforms,
   maxBody = 64 * 1024 * 1024,
+  gate = createGate(),
 }: StartOpts): http.Server => {
   const keys = keyring(keychain)
   const server = http.createServer((req, res) => {
     res.on('error', () => {})
     const t0 = Date.now()
-    serve(req, res, { config, tiers, spend, keys, log, upstreams, transforms, t0, maxBody }).catch((error: unknown) => {
+    serve(req, res, { config, tiers, spend, keys, log, upstreams, transforms, t0, maxBody, gate }).catch((error: unknown) => {
       if (res.headersSent) return res.destroy()
       const status = error && typeof error === 'object' && 'status' in error ? (error as { status?: number }).status : undefined
       if (status) {
