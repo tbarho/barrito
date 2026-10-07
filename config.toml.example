@@ -1,0 +1,68 @@
+# barrito configuration example
+# Copy to ~/.config/barrito/config.toml and customize
+
+port = 4141
+default = "personal"
+
+# Token savers: rtk compresses tool output, caveman trims reply prose
+[transforms]
+rtk = true            # requires `rtk` on PATH; `doctor` warns when missing
+caveman = "lite"      # off | lite | full | ultra
+
+# Model filtering for the gateway catalog
+[models]
+include = ["zai/*", "deepseek/*", "openai/gpt-6*", "google/gemini-3.8*", "anthropic/*"]
+exclude = ["*-preview", "*-0731"]
+require = ["tool-use"]          # Claude Code needs tool calling
+max_input_price = 5.00          # $/1M input tokens
+pin = []                        # always include these models even if filtered
+labels = {}                     # custom display names
+# agents.astra = "openai/gpt-6-astra"  # generated subagent file → model mapping
+
+# Graft integration (optional)
+[graft]
+roots = ["~/Code", "~/emdash/repositories"]
+repos = []  # manually added: [{ path = "~/Code/acme/api", summaries = false }]
+
+# Custom harnesses (extends built-ins: claude, codex, opencode, cursor-agent)
+# [harness.mybot]
+# bin = "mybot"
+# env = { OPENAI_BASE_URL = "{gateway}/v1", OPENAI_API_KEY = "{handle}" }
+
+# Identity: work
+[identities.work]
+claude_config_dir = "~/.claude"
+# share_from = "~/.claude"  # symlink rules/skills/agents/CLAUDE.md from another identity
+
+# Fallback chain: models to try when Max quota is spent
+# Empty array = stop and show the quota error (never spend API credits)
+fallback = ["zai/glm-5.3", "deepseek/deepseek-v4.2-flash"]
+
+# Repository matching: remotes are "host/owner/repo" globs, paths are filesystem globs
+[identities.work.match]
+remotes = ["github.com/acme/*", "github.com/work-org/*"]
+paths = ["~/Code/acme/**", "~/work/**"]
+
+# Keychain slots: plain names (macOS Keychain / Linux secret-tool),
+# or env:VAR (environment variable), or file:/path (0600 file)
+[identities.work.keychain]
+gateway = "barrito: gateway work"   # Vercel AI Gateway API key
+cursor = "barrito: cursor work"     # Cursor API key (for cursor-agent only)
+
+# Per-identity token-saver overrides (optional)
+# [identities.work.transforms]
+# rtk = false
+# caveman = "ultra"
+
+# Identity: personal
+[identities.personal]
+claude_config_dir = "~/.claude-personal"
+fallback = ["zai/glm-5.3"]
+
+[identities.personal.match]
+remotes = ["github.com/you/*"]
+paths = ["~/Code/you/**", "~/personal/**"]
+
+[identities.personal.keychain]
+gateway = "barrito: gateway personal"
+cursor = "barrito: cursor personal"

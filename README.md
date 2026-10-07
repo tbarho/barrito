@@ -8,13 +8,33 @@ barrito resolves which identity a directory belongs to, then routes every coding
 
 ## Install
 
+**Prerequisites:** Node.js ≥ 22.18 is required. Use `nvm` to install the required version:
+
+```bash
+nvm install 22    # installs latest 22.x (22.23.3 as of Oct 2026)
+nvm use 22
+```
+
+Or with a `.nvmrc` file in your project (included in this repo):
+
+```bash
+nvm install       # reads .nvmrc
+nvm use
+```
+
+For containers, use Node 22.18+ base images: `node:22-slim`, `node:22-alpine`, etc.
+
+**Installation:**
+
 ```
 npx barrito init
 brew install tbarho/tap/barrito && barrito init
 yarn global add barrito && barrito init
 ```
 
-`npx` runs the wizard and then offers to install globally. Take it: the service (launchd on macOS, systemd on Linux) needs a stable path to a real binary, which `npx`'s temp dir is not. Requires Node ≥ 22.18.
+`npx` runs the wizard and then offers to install globally. Take it: the service (launchd on macOS, systemd on Linux) needs a stable path to a real binary, which `npx`'s temp dir is not.
+
+**Configuration:** See [`config.toml.example`](config.toml.example) for an annotated configuration file and [`.env.example`](.env.example) for environment variable overrides (all optional).
 
 ## Quick start
 
