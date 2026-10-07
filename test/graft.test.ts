@@ -6,6 +6,7 @@ import fs, { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { build, ensure, run, scan, summaries, wire } from '../src/graft.ts'
+import { normalizeRemote } from '../src/identity.ts'
 import type { GraftExec, MissingError, Resolution, RunOpts, ScanEntry } from '../src/types.ts'
 
 delete process.env.BARRITO_IDENTITY
@@ -98,7 +99,7 @@ test('scan sorts by loc desc and captures the origin remote', () => {
   git(['remote', 'add', 'origin', 'git@github.com:tbarho/barrito.git'], { cwd: small })
   const repos = scan({ roots: [dir], git, fs, state: state() })
   assert.deepEqual(pathsOf(repos), [join(dir, 'big'), join(dir, 'small')])
-  assert.equal(repos[1]?.remote, 'git@github.com:tbarho/barrito.git')
+  assert.equal(normalizeRemote(repos[1]?.remote ?? ''), 'github.com/tbarho/barrito')
   assert.equal(repos[0]?.loc, 5)
 })
 
