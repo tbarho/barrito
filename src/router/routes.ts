@@ -92,6 +92,10 @@ export const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
     )
   })
 
+// add up to 1× so sessions that share a backoff don't retry in lockstep.
+// never shorter than ms — callers (and tests) treat the delay as a minimum
+export const jitter = (ms: number, rand: () => number = Math.random): number => ms + Math.floor(ms * rand())
+
 export const parse = (buf: Buffer): Parsed => {
   try {
     const raw: unknown = JSON.parse(buf.toString('utf8'))

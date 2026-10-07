@@ -5,6 +5,7 @@ import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:
 import type { AddressInfo } from 'node:net'
 import { once } from 'node:events'
 import { start } from '../src/router/server.ts'
+import { create as createGate } from '../src/router/gate.ts'
 import { create as createTiers } from '../src/router/tiers.ts'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -214,6 +215,7 @@ const boot = async ({
   transforms,
   upstreams,
   maxBody,
+  gate,
 }: {
   handler: (req: IncomingMessage, res: ServerResponse) => void
   tiers?: StartOpts['tiers']
@@ -222,6 +224,7 @@ const boot = async ({
   transforms?: Transforms
   upstreams?: Upstreams
   maxBody?: number
+  gate?: StartOpts['gate']
 }) => {
   const upstream = http.createServer(handler)
   upstream.listen(0, '127.0.0.1')
@@ -236,6 +239,7 @@ const boot = async ({
     log: (line: string) => logs.push(line),
     transforms,
     maxBody,
+    gate,
     upstreams:
       upstreams ??
       {
@@ -1330,6 +1334,68 @@ test('an error response reaching the client logs its upstream type and message',
     assert.equal((await res.json() as { error: { message: string } }).error.message, 'bad thing')
     assert.ok(r.logs.some((l) => / → direct 400 \[invalid_request_error: bad thing\]$/.test(l)), r.logs.join('\n'))
   } finally {
+    await r.stop()
+  }
+})
+
+test('at most the gate limit of upstream hops run at once; the rest wait', async () => {
+  let active = 0
+  let peak = 0
+  let open: () => void = () => {}
+  const held = new Promise<void>((resolve) => { open = resolve })
+  const cap = capture((e) => {
+    active += 1
+    peak = Math.max(peak, active)
+    held.then(() => {
+      active -= 1
+      ok(e, '{"ok":true}')
+    })
+  })
+  const r = await boot({ handler: cap.handler, tiers: fakeTiers({ route: { to: 'direct' } }), gate: createGate({ limit: 2, queue: 4, wait: 5000 }) })
+  try {
+    const pending = [0, 1, 2].map(() => call(r.port, '/v1/messages', {
+      body: JSON.stringify({ model: 'claude-sonnet-4.5', max_tokens: 8 }),
+      headers: claudeHeaders,
+    }))
+    assert.ok(await until(() => cap.seen.length === 2))
+    await pause(40)
+    assert.equal(cap.seen.length, 2)
+    assert.equal(peak, 2)
+    open()
+    const done = await Promise.all(pending)
+    assert.deepEqual(done.map((res) => res.status), [200, 200, 200])
+    await Promise.all(done.map((res) => res.text()))
+    assert.equal(peak, 2)
+    assert.equal(cap.seen.length, 3)
+  } finally {
+    open()
+    await r.stop()
+  }
+})
+
+test('a request past the wait queue is 503 and does not count as an upstream failure', async () => {
+  let open: () => void = () => {}
+  const held = new Promise<void>((resolve) => { open = resolve })
+  const cap = capture((e) => { held.then(() => ok(e, '{"ok":true}')) })
+  const tiers = fakeTiers({ route: { to: 'direct' } })
+  const r = await boot({ handler: cap.handler, tiers, gate: createGate({ limit: 1, queue: 0, wait: 50 }) })
+  try {
+    const first = call(r.port, '/v1/messages', {
+      body: JSON.stringify({ model: 'claude-sonnet-4.5', max_tokens: 8 }),
+      headers: claudeHeaders,
+    })
+    assert.ok(await until(() => cap.seen.length === 1))
+    const second = await call(r.port, '/v1/messages', {
+      body: JSON.stringify({ model: 'claude-sonnet-4.5', max_tokens: 8 }),
+      headers: claudeHeaders,
+    })
+    assert.equal(second.status, 503)
+    assert.match((await json(second)).error?.message ?? '', /upstream busy/)
+    assert.equal(tiers.calls.observe.length, 0)
+    open()
+    assert.equal((await first).status, 200)
+  } finally {
+    open()
     await r.stop()
   }
 })
