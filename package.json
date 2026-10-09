@@ -17,7 +17,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --import ./test/setup.ts --test 'test/*.test.ts'",
-    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && chmod +x dist/bin/barrito.js",
     "e2e": "node test/e2e/run.ts",
     "smoke": "bash scripts/smoke.sh",
     "prepublishOnly": "yarn verify && yarn build",
